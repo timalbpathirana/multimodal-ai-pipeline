@@ -1,17 +1,12 @@
 'use strict';
 
 const Parser = require('rss-parser');
+const { RSS_FEEDS } = require('../../config/feeds');
 
 const parser = new Parser({
   timeout: 10000,
   headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MelbPropertyAgent/1.0)' },
 });
-
-const RSS_FEEDS = [
-  'https://www.abc.net.au/news/feed/51892/rss.xml',
-  'https://www.realestate.com.au/news/feed/',
-  'https://www.propertyupdate.com.au/feed/',
-];
 
 async function fetchRssArticles(maxPerFeed = 2) {
   const results = await Promise.allSettled(
@@ -26,13 +21,15 @@ async function fetchRssArticles(maxPerFeed = 2) {
     }
     result.value.items.slice(0, maxPerFeed).forEach(item => {
       articles.push({
-        title: item.title || '',
+        title:   item.title || '',
         content: item.contentSnippet || item.content || item.summary || '',
-        url: item.link || '',
+        url:     item.link || '',
+        pubDate: item.isoDate || null,
       });
     });
   });
 
+  console.log(`[rss] Fetched ${articles.length} articles across ${RSS_FEEDS.length} feeds`);
   return articles;
 }
 
