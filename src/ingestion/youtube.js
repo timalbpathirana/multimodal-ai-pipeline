@@ -22,7 +22,7 @@ async function getLatestVideoId(channelId) {
 
 async function fetchYoutubeContent(channelId) {
   if (!channelId) {
-    throw new Error('YOUTUBE_CHANNEL_ID is not set');
+    throw new Error('channelId is required');
   }
 
   const videoId = await getLatestVideoId(channelId);
