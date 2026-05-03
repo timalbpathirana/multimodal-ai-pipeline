@@ -1,0 +1,6 @@
+node_modules/
+output/
+.env
+*.mp3
+*.mp4
+.claude/settings.local.json
