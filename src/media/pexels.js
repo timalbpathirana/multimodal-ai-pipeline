@@ -42,11 +42,11 @@ function pickBestVideoFile(videoFiles) {
   return hd || portrait[0] || videoFiles[0];
 }
 
-async function fetchVideo(script, outputDir) {
+async function fetchVideos(script, outputDir, count = 4) {
   const apiKey = process.env.PEXELS_API_KEY;
   if (!apiKey) {
     console.warn('[pexels] No PEXELS_API_KEY — skipping video fetch');
-    return null;
+    return [];
   }
 
   const query = buildSearchQuery(script);
@@ -56,41 +56,44 @@ async function fetchVideo(script, outputDir) {
   try {
     const res = await axios.get(`${PEXELS_BASE}/videos/search`, {
       headers: { Authorization: apiKey },
-      params: { query, per_page: 5, orientation: 'portrait' },
+      params: { query, per_page: 15, orientation: 'portrait' },
       timeout: 10000,
     });
     videos = res.data.videos;
   } catch (err) {
     console.warn('[pexels] Video API request failed:', err.message);
-    return null;
+    return [];
   }
 
   if (!videos || videos.length === 0) {
     console.warn('[pexels] No videos found, falling back to images');
-    return null;
+    return [];
   }
 
-  // Pick first video that has a usable file
+  const mediaDir = path.join(outputDir, 'media');
+  if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
+
+  const clipPaths = [];
   for (const video of videos) {
+    if (clipPaths.length >= count) break;
     const file = pickBestVideoFile(video.video_files || []);
     if (!file) continue;
 
-    const mediaDir = path.join(outputDir, 'media');
-    if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
-
-    const videoPath = path.join(mediaDir, 'background.mp4');
+    const clipIndex = clipPaths.length;
+    const clipPath = path.join(mediaDir, `clip_${clipIndex}.mp4`);
     try {
-      console.log(`[pexels] Downloading video (${file.width}x${file.height}, ${video.duration}s)...`);
-      await download(file.link, videoPath);
-      console.log(`[pexels] Video saved to ${videoPath}`);
-      return videoPath;
+      console.log(`[pexels] Downloading clip ${clipIndex + 1}/${count} (${file.width}x${file.height}, ${video.duration}s)...`);
+      await download(file.link, clipPath);
+      clipPaths.push(clipPath);
     } catch (err) {
-      console.warn(`[pexels] Video download failed:`, err.message);
+      console.warn(`[pexels] Clip ${clipIndex + 1} download failed:`, err.message);
     }
   }
 
-  console.warn('[pexels] All video downloads failed');
-  return null;
+  if (clipPaths.length === 0) console.warn('[pexels] All video downloads failed');
+  else console.log(`[pexels] Downloaded ${clipPaths.length} clip(s)`);
+
+  return clipPaths;
 }
 
 // ─── Images (fallback) ────────────────────────────────────────────────────────
@@ -136,4 +139,4 @@ async function fetchImages(script, outputDir) {
   return imagePaths;
 }
 
-module.exports = { fetchVideo, fetchImages };
+module.exports = { fetchVideos, fetchImages };

@@ -15,6 +15,13 @@ const RSS_FEEDS = [
 
 // YouTube channel IDs to ingest (UC... format — NOT the @handle).
 // Find in YouTube Studio > Settings > Channel > Advanced Settings.
-const VIDEO_FEEDS = [""];
+const VIDEO_FEEDS = [
+  "UCo_nWik261ZKSnjgoaIjz0w", //PersonalFinancewithRaviSharma
+  "UCB0znyWXxqj2d7Q_yQ6rz_Q", //Luke Wiles (@lukewiles1) – ~103K subscribers
+  "UC8MKnM1crMT4g1E4orv2gfg", //Pumped on Property – ~21K subscribers
+  "UCndQlfMU5dlCmBQfNabGKxw", //Your Australian Property Buyers Agents
+  "UCJvgKvj1XGjO9PylVT_pUsw", //Industry Insider Property (Andrew Date)
+  "UCg_RmJmYBRPuTpS2DjITuxg", //Investors Prime Real Estate (Konrad Bobilak)
+];
 
 module.exports = { RSS_FEEDS, VIDEO_FEEDS };

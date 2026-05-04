@@ -2,6 +2,7 @@
 
 const Anthropic = require("@anthropic-ai/sdk");
 const { isDuplicate } = require("./dedup");
+const { MODEL_CONFIG } = require("./claude");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -18,10 +19,13 @@ class NoHighSignalError extends Error {
 const NUMERIC_PATTERN =
   /(\$\d[\d,.]*[km]?\b|\d+\.?\d*\s*(%|per cent|basis points))/i;
 
-// Sentence must contain at least one of these words to be a valid market signal
+// Sentence must contain at least one of these words to be a valid market signal.
+// ── TO ADD A NEW TOPIC: append a word to the alternation below ──────────────
 const SIGNAL_KEYWORD_RE =
-  /\b(clearance|prices?|rates?|growth|decline|increase|decrease|supply|listings?|demand|median|auction|yield)\b/i;
+  /\b(clearance|prices?|rates?|growth|decline|increase|decrease|supply|listings?|demand|median|auction|yield|tax|gearing|budget|duty|concession|grant|scheme|rebate|deduction|cgt)\b/i;
 
+// ── TO ADD A NEW METRIC TYPE: add a new object with { type, keywords } ────────
+// The first matching type wins, so put more specific entries higher in the list.
 const METRIC_KEYWORDS = [
   {
     type: "clearance_rate",
@@ -75,6 +79,29 @@ const METRIC_KEYWORDS = [
       "rate cut",
       "rate rise",
       "rate hold",
+    ],
+  },
+  {
+    type: "tax_policy",
+    keywords: [
+      "negative gearing",
+      "positive gearing",
+      "capital gains",
+      "cgt",
+      "stamp duty",
+      "land tax",
+      "federal budget",
+      "state budget",
+      "tax policy",
+      "tax reform",
+      "tax concession",
+      "first home buyer grant",
+      "first home guarantee",
+      "help to buy",
+      "5% deposit",
+      "property tax",
+      "tax deduction",
+      "tax rebate",
     ],
   },
 ];
@@ -135,9 +162,11 @@ function toSentences(text) {
 
 function computePreScore(candidate) {
   let score = 0;
+  // ── TO ADD A NEW METRIC TYPE: add a score line here ────────────────────────
   if (candidate.metricType === "clearance_rate") score += 30;
   if (candidate.metricType === "price_change") score += 25;
   if (candidate.metricType === "interest_rate") score += 20;
+  if (candidate.metricType === "tax_policy") score += 20;
   if (candidate.metricType === "volume") score += 15;
   if (candidate.metricType === "days_on_market") score += 10;
   if (candidate.rawSentence.includes("%")) score += 10;
@@ -181,6 +210,7 @@ function extractCandidates(contentItems) {
         rawSentence: sentence.slice(0, 200),
         sourceTitle: item.title || "",
         sourceUrl: item.url || "",
+        source: item.source || "unknown",
         pubDate: item.pubDate || null,
         preScore: 0,
       };
@@ -206,6 +236,7 @@ function extractCandidates(contentItems) {
         rawSentence: item.title.slice(0, 200),
         sourceTitle: item.title || "",
         sourceUrl: item.url || "",
+        source: item.source || "unknown",
         pubDate: item.pubDate || null,
         preScore: 0,
       };
@@ -270,13 +301,13 @@ async function rankSignals(candidates) {
   const candidateText = candidates
     .map(
       (c, i) =>
-        `[${i}] type=${c.metricType} preScore=${c.preScore} value="${c.value}" direction=${c.direction ?? "unknown"} ` +
+        `[${i}] type=${c.metricType} source=${c.source} preScore=${c.preScore} value="${c.value}" direction=${c.direction ?? "unknown"} ` +
         `sentence="${c.rawSentence.slice(0, 120)}"`,
     )
     .join("\n");
 
   const response = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    model: MODEL_CONFIG.ranking,
     max_tokens: 128,
     system: RANK_SYSTEM_PROMPT_V2,
     messages: [

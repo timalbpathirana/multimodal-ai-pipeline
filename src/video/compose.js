@@ -48,36 +48,63 @@ function buildSubtitleOverlays(subtitles, baseInputIndex, baseStreamLabel) {
   return { filterGraph: parts.join('; '), finalLabel: 'vout' };
 }
 
-// ─── Mode 1: Pexels video background ─────────────────────────────────────────
+// ─── Mode 1: Multiple Pexels video clips concatenated ────────────────────────
 
-function composeWithVideo(bgVideoPath, voicePath, subtitles, totalDuration, outputPath) {
+async function composeWithVideos(bgVideoPaths, voicePath, subtitles, totalDuration, outputPath) {
+  // Probe each clip's actual duration
+  const clipDurations = await Promise.all(bgVideoPaths.map(getAudioDuration));
+
+  // Build a clip sequence long enough to cover totalDuration (cycle if needed)
+  const sequence = [];
+  let accumulated = 0;
+  let i = 0;
+  while (accumulated < totalDuration && i < 20) {
+    const idx = i % bgVideoPaths.length;
+    sequence.push({ path: bgVideoPaths[idx], duration: clipDurations[idx] });
+    accumulated += clipDurations[idx];
+    i++;
+  }
+
+  console.log(`[ffmpeg] Concatenating ${sequence.length} clip(s) (~${accumulated.toFixed(1)}s) → trimmed to ${totalDuration.toFixed(1)}s`);
+
   return new Promise((resolve, reject) => {
     const cmd = ffmpeg();
 
-    // Background video: loop indefinitely, trim to audio duration, scale portrait
-    cmd.input(bgVideoPath).inputOptions(['-stream_loop', '-1']);
-    // Audio
+    sequence.forEach(c => cmd.input(c.path));
     cmd.input(voicePath);
-    // Subtitle PNGs
     (subtitles || []).forEach(sub => cmd.input(sub.imagePath));
 
-    const hasSubtitles = subtitles && subtitles.length > 0;
+    const n = sequence.length;
+    const parts = [];
 
-    // Scale + crop background to 1080x1920, then chain subtitle overlays
+    // Scale + normalize each clip
+    for (let j = 0; j < n; j++) {
+      parts.push(
+        `[${j}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
+        `crop=1080:1920,setsar=1,fps=30[v${j}]`
+      );
+    }
+
+    // Concat all clips into [vcat]
+    const concatInputs = sequence.map((_, j) => `[v${j}]`).join('');
+    parts.push(`${concatInputs}concat=n=${n}:v=1:a=0[vcat]`);
+
+    const hasSubtitles = subtitles && subtitles.length > 0;
     let filterGraph;
     if (hasSubtitles) {
-      const scalePart = `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[scaled]`;
-      const { filterGraph: overlayPart } = buildSubtitleOverlays(subtitles, 2, 'scaled');
-      filterGraph = `${scalePart}; ${overlayPart}`;
+      const { filterGraph: overlayPart } = buildSubtitleOverlays(subtitles, n + 1, 'vcat');
+      filterGraph = `${parts.join('; ')}; ${overlayPart}`;
     } else {
-      filterGraph = `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[vout]`;
+      // Rename [vcat] → [vout] so the map works uniformly
+      parts.push(`[vcat]null[vout]`);
+      filterGraph = parts.join('; ');
     }
 
     cmd
       .outputOptions([
         '-filter_complex', filterGraph,
         '-map', '[vout]',
-        '-map', '1:a',
+        '-map', `${n}:a`,
         '-c:v', 'libx264',
         '-preset', 'fast',
         '-crf', '23',
@@ -249,13 +276,13 @@ function composeWithSolidBackground(voicePath, subtitles, totalDuration, outputP
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-async function composeVideo(voicePath, outputDir, { bgVideoPath, imagePaths, subtitles } = {}) {
+async function composeVideo(voicePath, outputDir, { bgVideoPaths, imagePaths, subtitles } = {}) {
   const duration   = await getAudioDuration(voicePath);
   const outputPath = path.join(outputDir, 'output.mp4');
 
-  if (bgVideoPath) {
-    console.log(`[ffmpeg] Video background + ${(subtitles || []).length} subtitle overlays (${duration.toFixed(1)}s)...`);
-    return composeWithVideo(bgVideoPath, voicePath, subtitles, duration, outputPath);
+  if (bgVideoPaths && bgVideoPaths.length > 0) {
+    console.log(`[ffmpeg] ${bgVideoPaths.length} video clip(s) + ${(subtitles || []).length} subtitle overlays (${duration.toFixed(1)}s)...`);
+    return composeWithVideos(bgVideoPaths, voicePath, subtitles, duration, outputPath);
   }
 
   if (imagePaths && imagePaths.length > 0) {
