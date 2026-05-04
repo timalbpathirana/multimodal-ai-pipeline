@@ -85,7 +85,24 @@ The original Phase 1 pattern did not catch standalone dollar amounts like `$850k
 **Signal keyword filter** — eliminates junk sentences:
 
 ```js
-const SIGNAL_KEYWORD_RE = /\b(clearance|prices?|rates?|growth|decline|increase|decrease|supply|listings?|demand|median|auction|yield)\b/i;
+const SIGNAL_KEYWORD_RE = /\b(clearance
+|prices?
+|rates?
+|growth
+|decline
+|increase
+|decrease
+|supply
+|listings?
+|demand
+|median
+|auction
+|yield
+|gearing
+|gains
+|capital
+|CGT
+|budget)\b/i;
 ```
 
 A sentence must match **both** patterns to become a candidate. This removes noise like:

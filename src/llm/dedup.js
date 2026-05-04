@@ -74,4 +74,13 @@ function markSeen(signal) {
   console.log(`[dedup] Marked as seen: "${key}"`);
 }
 
-module.exports = { isDuplicate, markSeen };
+function clearStore() {
+  try {
+    fs.writeFileSync(storePath, '{}', 'utf8');
+    console.log(`[dedup] Cache cleared: ${storePath}`);
+  } catch (err) {
+    console.warn(`[dedup] Could not clear store: ${err.message}`);
+  }
+}
+
+module.exports = { isDuplicate, markSeen, clearStore };

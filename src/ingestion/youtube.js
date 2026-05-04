@@ -3,13 +3,18 @@
 const Parser = require('rss-parser');
 const { YoutubeTranscript } = require('youtube-transcript');
 
-// rss-parser with custom field mapping for YouTube's yt:videoId namespace element
 const parser = new Parser({
   customFields: { item: [['yt:videoId', 'videoId']] },
   timeout: 10000,
 });
 
-async function getLatestVideoId(channelId) {
+const MAX_AGE_DAYS = 3;
+const MAX_VIDEOS_PER_CHANNEL = 3;
+const MAX_TRANSCRIPT_CHARS = 3000;
+
+async function fetchYoutubeContent(channelId) {
+  if (!channelId) throw new Error('channelId is required');
+
   const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
   const feed = await parser.parseURL(feedUrl);
 
@@ -17,25 +22,58 @@ async function getLatestVideoId(channelId) {
     throw new Error(`No videos found for channel ${channelId}`);
   }
 
-  return feed.items[0].videoId;
-}
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - MAX_AGE_DAYS);
+  cutoff.setHours(0, 0, 0, 0);
 
-async function fetchYoutubeContent(channelId) {
-  if (!channelId) {
-    throw new Error('channelId is required');
+  const recentVideos = feed.items
+    .filter(item => {
+      const pubDate = item.isoDate || null;
+      if (!pubDate || new Date(pubDate) < cutoff) return false;
+      return true;
+    })
+    .slice(0, MAX_VIDEOS_PER_CHANNEL);
+
+  if (recentVideos.length === 0) {
+    console.warn(`[youtube] No videos within last ${MAX_AGE_DAYS} days for channel ${channelId}`);
+    return [];
   }
 
-  const videoId = await getLatestVideoId(channelId);
-  console.log(`[youtube] Fetching transcript for video: ${videoId}`);
+  const results = await Promise.allSettled(
+    recentVideos.map(item => fetchTranscriptItem(item))
+  );
 
-  const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-  const fullText = transcriptItems.map(t => t.text).join(' ');
+  const articles = [];
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value) {
+      articles.push(result.value);
+    }
+  }
 
-  return {
-    title: `YouTube: latest video from channel ${channelId}`,
-    content: fullText.slice(0, 3000),
-    url: `https://www.youtube.com/watch?v=${videoId}`,
-  };
+  console.log(`[youtube] Channel ${channelId}: ${articles.length}/${recentVideos.length} recent videos with transcripts`);
+  return articles;
+}
+
+async function fetchTranscriptItem(item) {
+  const videoId = item.videoId;
+  const title = item.title || `YouTube video ${videoId}`;
+  const pubDate = item.isoDate || null;
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+
+  try {
+    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+    const fullText = transcriptItems.map(t => t.text).join(' ');
+    return {
+      title,
+      content: fullText.slice(0, MAX_TRANSCRIPT_CHARS),
+      url,
+      pubDate,
+      source: 'youtube',
+    };
+  } catch (err) {
+    console.warn(`[youtube] No transcript for "${title}" (${videoId}): ${err.message}`);
+    return null;
+  }
 }
 
 module.exports = { fetchYoutubeContent };
