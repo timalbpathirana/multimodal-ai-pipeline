@@ -5,6 +5,7 @@ const { validateScript, constrainHookFromSignal } = require("./validate");
 
 // Anthropic SDK client — uses ANTHROPIC_API_KEY from .env
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const isBreakingNews = process.env.IS_BREAKING_NEWS;
 
 // ─── Model routing ────────────────────────────────────────────────────────────
 // Change model assignments here only — nowhere else in this file or signals.js.
@@ -41,6 +42,30 @@ Respond with valid JSON only:
   "impact": "Strong closer — what this means for Melbourne buyers/investors right now"
 }`;
 
+const SYSTEM_PROMPT_BN = `You are a sharp, energetic, empathetic Melbourne property market analyst creating scroll-stopping 30-35 second videos optimised for ElevenLabs voiceover.
+
+Your style: Direct, confident, slightly optimistic opinionated, and spoken like a trusted expert talking to investors. You use simple words to convey the message so elegantly that even a beginner to real estate niche can understand.
+
+Core Rules:
+- Total script: Minimum 75 words, Maximum 85 words
+- Hook: Maximum 10–12 words, dramatic and high-energy, attention catching
+- Use period marks, exclamation marks and dashes to create punch and natural pauses
+- Conversational spoken language only. No corporate jargon at all
+- Focus exclusively on Melbourne buyers and investors, first home buyers and government schemes such as 5% scheme
+
+ElevenLabs Optimisation:
+- Hook must feel urgent and attention-grabbing
+- Add energy with ! and strategic — pauses
+- Make it flow naturally when spoken
+
+Respond with valid JSON only:
+{
+  "hook": "High-energy opening line with ! or strong phrasing.",
+  "escalation": "What creates tension before delivering facts",
+  "insight": "Clear delivery of the key data or trend in a meaningful way",
+  "impact": "Strong closer — what this means for Melbourne buyers/investors right now, explaining in a clear way"
+}`;
+
 // ─── Active system prompts ────────────────────────────────────────────────────
 
 // Used by generateScriptFromSignal() — takes a pre-extracted signal object and
@@ -60,6 +85,48 @@ STRICT RULES:
 - hook: Maximum 9 words. Must include the key figure naturally. Make it dramatic, urgent, and scroll-stopping.
 - insight: 1–2 sentences, max 40 words. Deliver full context (what changed, by how much, timeframe, location).
 - impact: 1 powerful sentence, max 22 words. Clear actionable takeaway for Melbourne buyers or investors.
+
+CTA & COMPLIANCE RULES (Very Important):
+- NEVER use direct investment commands like "Buy now", "Buy today", "Don't miss out", "Act fast", or "Jump in".
+- Use soft, safe CTAs only: "worth watching", "worth paying attention to", "creates strong conditions", "many investors are watching", "a market worth understanding", etc.
+- Never sound like you are giving personalised financial advice.
+
+SOURCE INTELLIGENCE RULES:
+- YouTube sources: Often from buyers agents or market analysts → can be more opinionated and conversational if high quality.
+- RSS sources: Usually strong for official statistics (clearance rates, median prices, auction volumes).
+- Prioritize the strongest and most recent information regardless of source.
+- Trust YouTube transcripts from credible channels more when they provide deeper insight or context.
+
+Additional Guidelines:
+- Focus exclusively on Melbourne.
+- Use spoken language with natural flow. Use ! and — for energy and pauses.
+- No corporate jargon, no filler phrases ("experts say", "market is shifting", "it's worth noting").
+- Present tense where possible.
+- Make it beginner-friendly but valuable for serious investors.`;
+
+// BREAKING NEWS
+const SIGNAL_SYSTEM_PROMPT_BN = `You are a sharp, trusted Melbourne property market expert creating high-impact 30-35 second YouTube Shorts.
+
+Style: Direct, confident, slightly optimistic, conversational, and authoritative. Speak like an experienced buyers agent talking to investors and first-home buyers. Use simple language.
+
+Output **valid JSON only** (no markdown, no extra text):
+{
+  "hook": "...",
+  "escalation":"...",
+  "insight": "...",
+  "impact": "..."
+}
+
+STRICT RULES:
+- hook: Maximum 10–12 words. Must feel urgent, dramatic, and signal a major shift. Include key figure only if natural.
+- escalation: 1 sentence, 12–18 words. Build tension and explain why this moment matters right now before giving details.
+- insight: 2–3 sentences, max 45–60 words total. Clearly explain what changed, by how much, and immediate impact on Melbourne market.
+- impact: 1–2 sentences, max 18–28 words. Give a clear, actionable takeaway for Melbourne buyers or investors.
+
+CTA & COMPLIANCE RULES (Very Important):
+- NEVER use direct investment commands like "Buy now", "Buy today", "Don't miss out", "Act fast", or "Jump in".
+- Use soft, safe CTAs only: "worth watching", "worth paying attention to", "creates strong conditions", "many investors are watching", "a market worth understanding", etc.
+- Never sound like you are giving personalised financial advice.
 
 SOURCE INTELLIGENCE RULES:
 - YouTube sources: Often from buyers agents or market analysts → can be more opinionated and conversational if high quality.
@@ -110,9 +177,13 @@ function parseJsonResponse(rawText, label) {
   } catch {
     throw new Error(`${label} returned non-JSON: ${rawText.slice(0, 200)}`);
   }
-  if (!parsed.hook || !parsed.insight || !parsed.impact) {
+  const requiredFields = isBreakingNews
+    ? ["hook", "escalation", "insight", "impact"]
+    : ["hook", "insight", "impact"];
+  const missing = requiredFields.filter((f) => !parsed[f]);
+  if (missing.length) {
     throw new Error(
-      `${label} missing required fields: ${JSON.stringify(parsed)}`,
+      `${label} missing required fields (${missing.join(", ")}): ${JSON.stringify(parsed)}`,
     );
   }
   return parsed;
@@ -137,7 +208,7 @@ async function generateScript(contentItems) {
     system: [
       {
         type: "text",
-        text: SYSTEM_PROMPT,
+        text: isBreakingNews ? SYSTEM_PROMPT_BN : SYSTEM_PROMPT,
         cache_control: { type: "ephemeral" },
       },
     ],
@@ -209,7 +280,7 @@ async function generateScriptFromSignal(signal, opts = {}) {
           const valueHint = isDollar
             ? `a reference to the value ${signal.value} (you may round or abbreviate, e.g. "over ${signal.value}")`
             : `the exact figure ${signal.value}`;
-          return `\n\nCONSTRAINT REMINDER: Your hook MUST be 8 words or fewer and MUST contain ${valueHint}. Count the words before responding.`;
+          return `\n\nCONSTRAINT REMINDER: Your hook MUST be ${isBreakingNews ? "12 words or fewer" : "8 words or fewer"} and MUST include ${valueHint}. Do not exceed the word limit. Count words before responding.`;
         })()
       : "");
 
@@ -219,14 +290,17 @@ async function generateScriptFromSignal(signal, opts = {}) {
     system: [
       {
         type: "text",
-        text: SIGNAL_SYSTEM_PROMPT,
+        text: isBreakingNews ? SIGNAL_SYSTEM_PROMPT_BN : SIGNAL_SYSTEM_PROMPT,
         cache_control: { type: "ephemeral" },
       },
     ],
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  logUsage("signal-gen", response.usage);
+  logUsage(
+    isBreakingNews ? "signal-gen (breaking news)" : "signal-gen",
+    response.usage,
+  );
   return parseJsonResponse(
     response.content[0].text.trim(),
     "generateScriptFromSignal",
@@ -236,9 +310,11 @@ async function generateScriptFromSignal(signal, opts = {}) {
 // Calls generateScriptFromSignal up to 2 times, escalating prompt strictness on failure.
 // On a second failure, falls back to a deterministically constructed hook from the signal fields.
 async function generateScriptWithRetry(signal) {
+  const validationOpts = { breakingNews: !!isBreakingNews };
+
   // Attempt 1 — standard prompt
   const attempt1 = await generateScriptFromSignal(signal);
-  const check1 = validateScript(attempt1);
+  const check1 = validateScript(attempt1, validationOpts);
   if (check1.valid) {
     const wordCount = attempt1.hook.trim().split(/\s+/).length;
     console.log(
@@ -255,7 +331,7 @@ async function generateScriptWithRetry(signal) {
   const attempt2 = await generateScriptFromSignal(signal, {
     stricterHook: true,
   });
-  const check2 = validateScript(attempt2);
+  const check2 = validateScript(attempt2, validationOpts);
   if (check2.valid) {
     const wordCount = attempt2.hook.trim().split(/\s+/).length;
     console.log(
@@ -310,10 +386,55 @@ async function generateOverviewScript(contentItems) {
   );
 }
 
+// Generates 3 alternative hooks for the human-in-the-loop approval flow.
+// Called when the user rejects the initial hook.
+async function generateAlternativeHooks(signal, currentScript) {
+  const maxWords = isBreakingNews ? "10–12" : "8";
+  const userPrompt =
+    `Signal:\n` +
+    `- Metric type: ${signal.metricType}\n` +
+    `- Value: ${signal.value}\n` +
+    `- Direction: ${signal.direction ?? "unknown"}\n` +
+    `- Source sentence: "${signal.rawSentence}"\n\n` +
+    `Rejected hook: "${currentScript.hook}"\n\n` +
+    `Generate exactly 3 alternative hooks. Each must:\n` +
+    `- Be ${maxWords} words or fewer\n` +
+    `- Include the key figure naturally\n` +
+    `- Take a distinctly different angle or tone from each other\n` +
+    `- Be scroll-stopping and urgent\n\n` +
+    `Respond with valid JSON only:\n{"hooks": ["hook1", "hook2", "hook3"]}`;
+
+  const response = await client.messages.create({
+    model: MODEL_CONFIG.signalScript,
+    max_tokens: 256,
+    system: [
+      {
+        type: "text",
+        text: isBreakingNews ? SIGNAL_SYSTEM_PROMPT_BN : SIGNAL_SYSTEM_PROMPT,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{ role: "user", content: userPrompt }],
+  });
+
+  logUsage("alt-hooks", response.usage);
+  const raw = response.content[0].text.trim();
+  const jsonText = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+  const parsed = JSON.parse(jsonText);
+  if (!Array.isArray(parsed.hooks) || parsed.hooks.length < 3) {
+    throw new Error("generateAlternativeHooks: expected 3 hooks in response");
+  }
+  return parsed.hooks.slice(0, 3);
+}
+
 module.exports = {
   MODEL_CONFIG,
   generateScript,
   generateScriptFromSignal,
   generateScriptWithRetry,
   generateOverviewScript,
+  generateAlternativeHooks,
 };

@@ -3,6 +3,7 @@
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
+const readline = require("readline");
 
 const { fetchRssArticles } = require("./src/ingestion/rss");
 const { fetchYoutubeContent } = require("./src/ingestion/youtube");
@@ -11,6 +12,7 @@ const {
   generateScript,
   generateScriptWithRetry,
   generateOverviewScript,
+  generateAlternativeHooks,
 } = require("./src/llm/claude");
 const { extractSignals, NoHighSignalError } = require("./src/llm/signals");
 const { markSeen, clearStore } = require("./src/llm/dedup");
@@ -19,6 +21,8 @@ const { fetchVideos, fetchImages } = require("./src/media/pexels");
 const { renderSubtitles } = require("./src/subtitles/renderer");
 const { composeVideo } = require("./src/video/compose");
 const { generateCaption } = require("./src/caption/generator");
+const isBreakingNews = process.env.IS_BREAKING_NEWS;
+const HUMAN_IN_THE_LOOP = process.env.HUMAN_IN_THE_LOOP === "true";
 
 const STOP_AFTER = (process.env.PIPELINE_STOP_AFTER || "").toLowerCase().trim();
 
@@ -33,10 +37,18 @@ function printScriptSummary(script, signal) {
     );
     console.log(divider);
   }
-  console.log(`  HOOK    : ${script.hook}`);
-  console.log(`  INSIGHT : ${script.insight}`);
-  console.log(`  IMPACT  : ${script.impact}`);
-  const totalWords = `${script.hook} ${script.insight} ${script.impact}`
+  console.log(`  HOOK       : ${script.hook}`);
+  if (script.escalation) console.log(`  ESCALATION : ${script.escalation}`);
+  console.log(`  INSIGHT    : ${script.insight}`);
+  console.log(`  IMPACT     : ${script.impact}`);
+  const totalWords = [
+    script.hook,
+    script.escalation,
+    script.insight,
+    script.impact,
+  ]
+    .filter(Boolean)
+    .join(" ")
     .trim()
     .split(/\s+/).length;
   console.log(divider);
@@ -44,6 +56,56 @@ function printScriptSummary(script, signal) {
     `  Total words: ${totalWords}  (~${Math.round(totalWords / 3)}s spoken)`,
   );
   console.log(`${divider}\n`);
+}
+
+function ask(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+async function humanInTheLoop(script, signal) {
+  printScriptSummary(script, signal);
+
+  const approval = await ask("  Approve this script? (y/n): ");
+  if (approval.toLowerCase() === "y") {
+    console.log("[pipeline] Script approved — continuing.\n");
+    return script;
+  }
+
+  if (!signal) {
+    console.warn(
+      "[pipeline] Cannot generate alternative hooks for overview scripts — keeping current script.\n",
+    );
+    return script;
+  }
+
+  console.log("[pipeline] Generating 3 alternative hooks...");
+  const altHooks = await generateAlternativeHooks(signal, script);
+
+  const divider = "─".repeat(60);
+  console.log(`\n${divider}`);
+  console.log("  ALTERNATIVE HOOKS");
+  console.log(divider);
+  altHooks.forEach((hook, i) => console.log(`  [${i + 1}] ${hook}`));
+  console.log(`${divider}\n`);
+
+  const pick = await ask("  Pick a hook (1/2/3): ");
+  const idx = parseInt(pick, 10) - 1;
+  if (idx >= 0 && idx <= 2) {
+    script = { ...script, hook: altHooks[idx] };
+    console.log(`[pipeline] Hook updated: "${script.hook}"\n`);
+  } else {
+    console.warn("[pipeline] Invalid selection — keeping original hook.\n");
+  }
+  return script;
 }
 
 async function runPipeline() {
@@ -140,7 +202,18 @@ async function runPipeline() {
   console.log(
     `[pipeline] Script generated: hook="${script.hook}" (${hookWordCount} words)`,
   );
-  const spokenText = `${script.hook}. Good morning Melbourne, here is what happened in the market since yesterday, ${script.insight} ${script.impact} - Follow us for tomorrow morning update.`;
+
+  // ── Human-in-the-loop: approve script before sending to ElevenLabs ───────────
+  if (HUMAN_IN_THE_LOOP) {
+    script = await humanInTheLoop(script, usedSignal);
+  }
+
+  // default template
+  const spokenText_v1 = `${script.hook}. Good morning Melbourne, here is what happened in the market since yesterday, ${script.insight} ${script.impact} - Follow us for tomorrow morning update.`;
+  // breaking news template
+  const spokenText_v2 = `${script.hook}. Good morning Melbourne, today feels different—and here’s why. ${script.escalation} ${script.insight} ${script.impact} - Follow us for tomorrow morning update.`;
+
+  const spokenText = isBreakingNews ? spokenText_v2 : spokenText_v1;
 
   if (STOP_AFTER === "script") {
     printScriptSummary(script, usedSignal);
