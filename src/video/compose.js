@@ -50,22 +50,26 @@ function buildSubtitleOverlays(subtitles, baseInputIndex, baseStreamLabel) {
 
 // ─── Mode 1: Multiple Pexels video clips concatenated ────────────────────────
 
+const CLIP_MAX_SECONDS = 10;
+
 async function composeWithVideos(bgVideoPaths, voicePath, subtitles, totalDuration, outputPath) {
   // Probe each clip's actual duration
   const clipDurations = await Promise.all(bgVideoPaths.map(getAudioDuration));
 
-  // Build a clip sequence long enough to cover totalDuration (cycle if needed)
+  // Build a clip sequence long enough to cover totalDuration (cycle if needed).
+  // Each clip is capped at CLIP_MAX_SECONDS so multiple clips always appear.
   const sequence = [];
   let accumulated = 0;
   let i = 0;
   while (accumulated < totalDuration && i < 20) {
     const idx = i % bgVideoPaths.length;
-    sequence.push({ path: bgVideoPaths[idx], duration: clipDurations[idx] });
-    accumulated += clipDurations[idx];
+    const effectiveDuration = Math.min(clipDurations[idx], CLIP_MAX_SECONDS);
+    sequence.push({ path: bgVideoPaths[idx], effectiveDuration });
+    accumulated += effectiveDuration;
     i++;
   }
 
-  console.log(`[ffmpeg] Concatenating ${sequence.length} clip(s) (~${accumulated.toFixed(1)}s) → trimmed to ${totalDuration.toFixed(1)}s`);
+  console.log(`[ffmpeg] Concatenating ${sequence.length} clip(s) (each ≤${CLIP_MAX_SECONDS}s, ~${accumulated.toFixed(1)}s total) → trimmed to ${totalDuration.toFixed(1)}s`);
 
   return new Promise((resolve, reject) => {
     const cmd = ffmpeg();
@@ -77,10 +81,12 @@ async function composeWithVideos(bgVideoPaths, voicePath, subtitles, totalDurati
     const n = sequence.length;
     const parts = [];
 
-    // Scale + normalize each clip
+    // Trim each clip to its effective duration, then scale + normalize
     for (let j = 0; j < n; j++) {
+      const ed = sequence[j].effectiveDuration.toFixed(3);
       parts.push(
-        `[${j}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
+        `[${j}:v]trim=0:${ed},setpts=PTS-STARTPTS,` +
+        `scale=1080:1920:force_original_aspect_ratio=increase,` +
         `crop=1080:1920,setsar=1,fps=30[v${j}]`
       );
     }

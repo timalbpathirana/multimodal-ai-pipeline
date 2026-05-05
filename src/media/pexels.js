@@ -6,22 +6,22 @@ const axios = require('axios');
 
 const PEXELS_BASE = 'https://api.pexels.com';
 
-const STOP_WORDS = new Set([
-  'the','a','an','and','or','but','in','on','at','to','for','of','with',
-  'is','are','was','were','be','been','has','have','had','this','that',
-  'these','those','will','would','could','should','may','might','must',
-  'can','its','it','our','their','your','my','we','they','you','now',
-  'just','more','into','from','over','about','after','before','when',
-]);
+const CALM_REAL_ESTATE_QUERIES = [
+  'Melbourne aerial suburb view',
+  'Australian real estate house exterior',
+  'Melbourne skyline aerial drone',
+  'Australian neighborhood peaceful street',
+  'Melbourne waterfront suburb',
+  'Australian property garden',
+  'Melbourne suburb rooftop view',
+  'Australia coastal suburb aerial',
+];
+
+const MIN_CLIP_DURATION = 5; // skip clips too short to be useful
 
 function buildSearchQuery(script) {
-  const words = script.hook
-    .replace(/[^a-zA-Z0-9 ]/g, ' ')
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(w => w.length > 3 && !STOP_WORDS.has(w))
-    .slice(0, 3);
-  return `Melbourne property ${words.join(' ')}`.trim();
+  const idx = script.hook.length % CALM_REAL_ESTATE_QUERIES.length;
+  return CALM_REAL_ESTATE_QUERIES[idx];
 }
 
 async function download(url, destPath) {
@@ -76,6 +76,10 @@ async function fetchVideos(script, outputDir, count = 4) {
   const clipPaths = [];
   for (const video of videos) {
     if (clipPaths.length >= count) break;
+    if ((video.duration || 0) < MIN_CLIP_DURATION) {
+      console.log(`[pexels] Skipping clip (too short: ${video.duration}s)`);
+      continue;
+    }
     const file = pickBestVideoFile(video.video_files || []);
     if (!file) continue;
 
