@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["ffmpeg", "nodejs_20"]
+
+[phases.build]
+cmds = ["npm install", "npm run build:client"]
+
+[start]
+cmd = "node web/server/scripts/seed.js && node web/server/index.js"

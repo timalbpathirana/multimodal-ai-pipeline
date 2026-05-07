@@ -17,7 +17,7 @@ const CALM_REAL_ESTATE_QUERIES = [
   'Australia coastal suburb aerial',
 ];
 
-const MIN_CLIP_DURATION = 5; // skip clips too short to be useful
+const MIN_CLIP_DURATION = 5;
 
 function buildSearchQuery(script) {
   const idx = script.hook.length % CALM_REAL_ESTATE_QUERIES.length;
@@ -33,19 +33,16 @@ async function download(url, destPath) {
   fs.writeFileSync(destPath, Buffer.from(response.data));
 }
 
-// ─── Videos ──────────────────────────────────────────────────────────────────
-
 function pickBestVideoFile(videoFiles) {
-  // Prefer portrait HD (1080x1920 or similar), fall back to any portrait file
   const portrait = videoFiles.filter(f => f.height > f.width);
   const hd = portrait.find(f => f.width >= 720);
   return hd || portrait[0] || videoFiles[0];
 }
 
-async function fetchVideos(script, outputDir, count = 4) {
-  const apiKey = process.env.PEXELS_API_KEY;
+async function fetchVideos(agentCtx, script, outputDir, count = 4) {
+  const apiKey = agentCtx.pexelsApiKey;
   if (!apiKey) {
-    console.warn('[pexels] No PEXELS_API_KEY — skipping video fetch');
+    console.warn('[pexels] No pexelsApiKey — skipping video fetch');
     return [];
   }
 
@@ -100,12 +97,10 @@ async function fetchVideos(script, outputDir, count = 4) {
   return clipPaths;
 }
 
-// ─── Images (fallback) ────────────────────────────────────────────────────────
-
-async function fetchImages(script, outputDir) {
-  const apiKey = process.env.PEXELS_API_KEY;
+async function fetchImages(agentCtx, script, outputDir) {
+  const apiKey = agentCtx.pexelsApiKey;
   if (!apiKey) {
-    console.warn('[pexels] No PEXELS_API_KEY — skipping image fetch');
+    console.warn('[pexels] No pexelsApiKey — skipping image fetch');
     return [];
   }
 

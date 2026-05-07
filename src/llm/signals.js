@@ -1,10 +1,7 @@
 "use strict";
 
 const Anthropic = require("@anthropic-ai/sdk");
-const { isDuplicate } = require("./dedup");
 const { MODEL_CONFIG } = require("./claude");
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 class NoHighSignalError extends Error {
   constructor(message) {
@@ -297,7 +294,8 @@ Return ONLY valid JSON — no explanation, no markdown:
   "reason": "<one short, sharp sentence explaining your choice>"
 }`;
 
-async function rankSignals(candidates) {
+async function rankSignals(agentCtx, candidates) {
+  const client = new Anthropic({ apiKey: agentCtx.anthropicApiKey });
   const candidateText = candidates
     .map(
       (c, i) =>
@@ -309,7 +307,7 @@ async function rankSignals(candidates) {
   const response = await client.messages.create({
     model: MODEL_CONFIG.ranking,
     max_tokens: 128,
-    system: RANK_SYSTEM_PROMPT_V2,
+    system: agentCtx.prompts.rankSystem,
     messages: [
       {
         role: "user",
@@ -343,7 +341,7 @@ async function rankSignals(candidates) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-async function extractSignals(contentItems) {
+async function extractSignals(agentCtx, contentItems) {
   const rawCandidates = extractCandidates(contentItems);
   console.log(
     `[signals] Candidates found: ${rawCandidates.length} (raw numeric + keyword matches)`,
@@ -361,7 +359,7 @@ async function extractSignals(contentItems) {
     .join(", ");
   console.log(`[signals] Pre-scores — top candidates: ${top3}`);
 
-  const ranked = await rankSignals(candidates);
+  const ranked = await rankSignals(agentCtx, candidates);
 
   if (ranked.selectedIndex === -1 || ranked.score < 0) {
     throw new NoHighSignalError(
@@ -375,49 +373,112 @@ async function extractSignals(contentItems) {
     `[signals] LLM selected index=${ranked.selectedIndex} llmScore=${ranked.score} preScore=${best.preScore} finalScore=${finalScore} reason="${ranked.reason}"`,
   );
 
-  // Combined threshold: llmScore + preScore >= 50
   if (finalScore < 50) {
-    throw new NoHighSignalError(
-      `Combined score too low: finalScore=${finalScore} (need ≥50)`,
-    );
+    throw new NoHighSignalError(`Combined score too low: finalScore=${finalScore} (need ≥50)`);
   }
 
-  // Deduplication: try best, then next non-deduped candidates by preScore
-  if (!isDuplicate(best)) {
-    console.log(
-      `[signals] Best signal — type=${best.metricType} value="${best.value}" finalScore=${finalScore}`,
-    );
-    return {
-      best: { ...best, score: finalScore },
-      all: candidates,
-      score: finalScore,
-    };
-  }
-
-  console.warn(
-    `[signals] Dedup: top signal "${best.metricType}:${best.value}" already seen — trying next candidate`,
-  );
-
-  const NEXT_PRESCORE_MIN = 20;
-  for (const candidate of candidates) {
-    if (candidate === best) continue;
-    if (candidate.preScore < NEXT_PRESCORE_MIN) break; // sorted desc, no point continuing
-    if (!isDuplicate(candidate)) {
-      console.log(
-        `[signals] Dedup: next candidate — type=${candidate.metricType} value="${candidate.value}" preScore=${candidate.preScore}`,
-      );
-      return {
-        best: { ...candidate, score: candidate.preScore },
-        all: candidates,
-        score: candidate.preScore,
-      };
-    }
-  }
-
-  console.warn(
-    "[signals] Dedup: all strong candidates already seen — falling back to overview",
-  );
-  throw new NoHighSignalError("All strong signals already used recently");
+  console.log(`[signals] Best signal — type=${best.metricType} value="${best.value}" finalScore=${finalScore}`);
+  return {
+    best: { ...best, score: finalScore },
+    all: candidates,
+    score: finalScore,
+  };
 }
 
-module.exports = { extractSignals, NoHighSignalError };
+// ── Weekly story generation ───────────────────────────────────────────────────
+
+const STORY_FINDER_SYSTEM_PROMPT = `You are a Melbourne property market story analyst.
+
+You will be given 7 days of content from multiple sources: RSS feeds, YouTube transcripts, and web search results.
+
+Your task: Identify cross-source patterns and unique angles, then generate exactly {count} distinct, non-overlapping story ideas for short-form social videos.
+
+Rules:
+- Each story can draw from a single source OR combine signals from multiple sources
+- Look for where multiple sources corroborate the same trend — those make the strongest stories
+- Prioritise Melbourne-specific data (clearance rates, median prices, suburb trends, policy changes)
+- Ensure stories are varied: mix metric types, geographies, and angles
+- Every story must be grounded in actual data from the sources provided — no fabrication
+- sourceData must include the verbatim excerpt(s) that inspired the story (max 400 chars each, up to 3 excerpts)
+
+Return ONLY a valid JSON array — no markdown fences, no explanation:
+[
+  {
+    "title": "<short headline, max 10 words>",
+    "angle": "<narrative angle and why this story is interesting, 2-3 sentences>",
+    "keyMetrics": "<key data points and figures, comma-separated>",
+    "sourceFeeds": ["<feed name 1>", "<feed name 2>"],
+    "sourceData": "<verbatim excerpts from source content that support this story>"
+  }
+]`;
+
+async function generateStoriesFromContent(agentCtx, contentItems, count = 28) {
+  if (contentItems.length === 0) {
+    throw new Error("[signals] Cannot generate stories: no content items provided");
+  }
+
+  const grouped = {};
+  for (const item of contentItems) {
+    const key = item.source || "unknown";
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(item);
+  }
+
+  const sections = Object.entries(grouped).map(([src, items]) => {
+    const header = `=== Source: ${src.toUpperCase()} (${items.length} items) ===`;
+    const body = items
+      .map((item, i) => {
+        const snippet = (item.content || "").slice(0, 500).replace(/\n+/g, " ");
+        return `[${i + 1}] Title: "${item.title}"\nURL: ${item.url}\nDate: ${item.pubDate || "unknown"}\nContent: ${snippet}`;
+      })
+      .join("\n\n");
+    return `${header}\n${body}`;
+  });
+
+  const contentBlock = sections.join("\n\n");
+  const systemPrompt = agentCtx.prompts.storyFinderSystem.replace("{count}", count);
+  const client = new Anthropic({ apiKey: agentCtx.anthropicApiKey });
+
+  const response = await client.messages.create({
+    model: MODEL_CONFIG.ranking,
+    max_tokens: 8000,
+    system: systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: `Here is 7 days of Melbourne property content from ${contentItems.length} items across ${Object.keys(grouped).length} source types.\n\nGenerate exactly ${count} story ideas.\n\n${contentBlock}`,
+      },
+    ],
+  });
+
+  const usage = response.usage;
+  console.log(
+    `[signals] generateStoriesFromContent tokens — input: ${usage.input_tokens}, output: ${usage.output_tokens}`,
+  );
+
+  const rawText = response.content[0].text.trim();
+  const jsonText = rawText
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+
+  let stories;
+  try {
+    stories = JSON.parse(jsonText);
+  } catch {
+    throw new Error(`Story generator returned non-JSON: ${rawText.slice(0, 300)}`);
+  }
+
+  if (!Array.isArray(stories)) {
+    throw new Error("Story generator did not return an array");
+  }
+
+  if (stories.length < Math.floor(count / 2)) {
+    throw new Error(`Story generator returned too few stories: ${stories.length} (expected at least ${Math.floor(count / 2)})`);
+  }
+
+  console.log(`[signals] Generated ${stories.length} stories from ${contentItems.length} content items`);
+  return stories;
+}
+
+module.exports = { extractSignals, NoHighSignalError, generateStoriesFromContent };

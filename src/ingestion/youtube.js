@@ -8,11 +8,10 @@ const parser = new Parser({
   timeout: 10000,
 });
 
-const MAX_AGE_DAYS = 3;
 const MAX_VIDEOS_PER_CHANNEL = 3;
 const MAX_TRANSCRIPT_CHARS = 3000;
 
-async function fetchYoutubeContent(channelId) {
+async function fetchYoutubeContent(channelId, maxAgeDays = 3) {
   if (!channelId) throw new Error('channelId is required');
 
   const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
@@ -23,7 +22,7 @@ async function fetchYoutubeContent(channelId) {
   }
 
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - MAX_AGE_DAYS);
+  cutoff.setDate(cutoff.getDate() - maxAgeDays);
   cutoff.setHours(0, 0, 0, 0);
 
   const recentVideos = feed.items
@@ -35,7 +34,7 @@ async function fetchYoutubeContent(channelId) {
     .slice(0, MAX_VIDEOS_PER_CHANNEL);
 
   if (recentVideos.length === 0) {
-    console.warn(`[youtube] No videos within last ${MAX_AGE_DAYS} days for channel ${channelId}`);
+    console.warn(`[youtube] No videos within last ${maxAgeDays} days for channel ${channelId}`);
     return [];
   }
 

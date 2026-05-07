@@ -1,10 +1,18 @@
 'use strict';
 
+require('dotenv').config();
+const { buildCliAgentContext } = require('./web/server/lib/agentContext');
+const { runIngest } = require('./src/ingestion/ingest');
 const { runPipeline } = require('./pipeline');
 
-runPipeline()
-  .then(result => {
-    console.log('\nScript:', result.scriptText);
+buildCliAgentContext()
+  .then(async (agentCtx) => {
+    if (process.env.RUN_INGEST === 'true') {
+      return runIngest(agentCtx);
+    }
+    return runPipeline(agentCtx);
+  })
+  .then(() => {
     process.exit(0);
   })
   .catch(err => {

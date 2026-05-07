@@ -3,33 +3,32 @@
 require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
-const readline = require("readline");
 
 const { fetchRssArticles } = require("./src/ingestion/rss");
 const { fetchYoutubeContent } = require("./src/ingestion/youtube");
-const { VIDEO_FEEDS } = require("./config/feeds");
+const { runIngest } = require("./src/ingestion/ingest");
 const {
-  generateScript,
   generateScriptWithRetry,
   generateOverviewScript,
   generateAlternativeHooks,
+  generateScriptFromStoryWithRetry,
 } = require("./src/llm/claude");
 const { extractSignals, NoHighSignalError } = require("./src/llm/signals");
-const { markSeen, clearStore } = require("./src/llm/dedup");
+const { getNextPendingStory, markStoryUsed } = require("./src/airtable/stories");
 const { generateVoice } = require("./src/voice/elevenlabs");
 const { fetchVideos, fetchImages } = require("./src/media/pexels");
 const { renderSubtitles } = require("./src/subtitles/renderer");
 const { composeVideo } = require("./src/video/compose");
 const { generateCaption } = require("./src/caption/generator");
-const isBreakingNews = process.env.IS_BREAKING_NEWS;
-const HUMAN_IN_THE_LOOP = process.env.HUMAN_IN_THE_LOOP === "true";
+const { uploadToTikTok } = require("./src/social/tiktok");
+const { ask } = require("./src/utils/prompt");
 
-const STOP_AFTER = (process.env.PIPELINE_STOP_AFTER || "").toLowerCase().trim();
+// ── Display helpers ───────────────────────────────────────────────────────────
 
-function printScriptSummary(script, signal) {
+function printScriptSummary(script, label, signal) {
   const divider = "─".repeat(60);
   console.log(`\n${divider}`);
-  console.log("  SCRIPT PREVIEW");
+  console.log(`  SCRIPT PREVIEW${label ? ` — ${label}` : ""}`);
   console.log(divider);
   if (signal) {
     console.log(
@@ -38,57 +37,39 @@ function printScriptSummary(script, signal) {
     console.log(divider);
   }
   console.log(`  HOOK       : ${script.hook}`);
-  if (script.escalation) console.log(`  ESCALATION : ${script.escalation}`);
+  if (script.bridge) console.log(`  BRIDGE     : ${script.bridge}`);
   console.log(`  INSIGHT    : ${script.insight}`);
   console.log(`  IMPACT     : ${script.impact}`);
-  const totalWords = [
-    script.hook,
-    script.escalation,
-    script.insight,
-    script.impact,
-  ]
+  const totalWords = [script.hook, script.bridge, script.insight, script.impact]
     .filter(Boolean)
     .join(" ")
     .trim()
     .split(/\s+/).length;
   console.log(divider);
-  console.log(
-    `  Total words: ${totalWords}  (~${Math.round(totalWords / 3)}s spoken)`,
-  );
+  const estimatedSecs = Math.round(totalWords / 2.5);
+  const wordCountNote = totalWords < 120 ? " ⚠ too short" : totalWords > 160 ? " ⚠ too long" : "";
+  console.log(`  Total words: ${totalWords}  (~${estimatedSecs}s spoken)${wordCountNote}`);
   console.log(`${divider}\n`);
 }
 
-function ask(question) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
+// ── Human-in-the-loop: review and optionally replace the hook (CLI only) ──────
 
-async function humanInTheLoop(script, signal) {
-  printScriptSummary(script, signal);
+async function reviewHook(agentCtx, script, label, signal) {
+  printScriptSummary(script, label, signal);
 
-  const approval = await ask("  Approve this script? (y/n): ");
+  const approval = await ask("  Approve this hook? (y/n): ");
   if (approval.toLowerCase() === "y") {
-    console.log("[pipeline] Script approved — continuing.\n");
+    agentCtx.log(`[pipeline] Hook approved for ${label}.`);
     return script;
   }
 
   if (!signal) {
-    console.warn(
-      "[pipeline] Cannot generate alternative hooks for overview scripts — keeping current script.\n",
-    );
+    console.warn("[pipeline] No signal available for alternative hooks — keeping current hook.\n");
     return script;
   }
 
   console.log("[pipeline] Generating 3 alternative hooks...");
-  const altHooks = await generateAlternativeHooks(signal, script);
+  const altHooks = await generateAlternativeHooks(agentCtx, signal, script);
 
   const divider = "─".repeat(60);
   console.log(`\n${divider}`);
@@ -101,29 +82,19 @@ async function humanInTheLoop(script, signal) {
   const idx = parseInt(pick, 10) - 1;
   if (idx >= 0 && idx <= 2) {
     script = { ...script, hook: altHooks[idx] };
-    console.log(`[pipeline] Hook updated: "${script.hook}"\n`);
+    agentCtx.log(`[pipeline] Hook updated: "${script.hook}"`);
   } else {
     console.warn("[pipeline] Invalid selection — keeping original hook.\n");
   }
   return script;
 }
 
-async function runPipeline() {
-  if (STOP_AFTER)
-    console.log(
-      `[pipeline] PIPELINE_STOP_AFTER=${STOP_AFTER} — will exit early after this stage`,
-    );
-  if (process.env.CLEAR_DEDUP_CACHE === "true") clearStore();
-  console.log("[pipeline] Starting Melbourne property pipeline...");
-  const startTime = Date.now();
+// ── Breaking news flow (always 1 video) ──────────────────────────────────────
 
-  const outputDir = path.resolve(process.env.OUTPUT_DIR || "./output");
-  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-
-  // ── Step 1: Ingest (RSS + YouTube channels in parallel) ────────────────────
-  const ytTasks = VIDEO_FEEDS.map((id) => fetchYoutubeContent(id));
+async function runBreakingNewsPipeline(agentCtx) {
+  const ytTasks = agentCtx.youtubeChannelIds.map((id) => fetchYoutubeContent(id));
   const [rssResult, ...ytResults] = await Promise.allSettled([
-    fetchRssArticles(2),
+    fetchRssArticles(agentCtx, 2),
     ...ytTasks,
   ]);
 
@@ -138,128 +109,214 @@ async function runPipeline() {
   }
   for (const [i, ytResult] of ytResults.entries()) {
     if (ytResult.status === "fulfilled") {
-      const videos = ytResult.value;
-      ytCount += videos.length;
-      contentItems.push(...videos);
+      ytCount += ytResult.value.length;
+      contentItems.push(...ytResult.value);
     } else {
       console.warn(
-        `[pipeline] YouTube ingestion failed for channel ${VIDEO_FEEDS[i]} (continuing):`,
+        `[pipeline] YouTube ingestion failed for channel ${agentCtx.youtubeChannelIds[i]} (continuing):`,
         ytResult.reason.message,
       );
     }
   }
-  if (VIDEO_FEEDS.length === 0)
-    console.log("[pipeline] YouTube skipped (VIDEO_FEEDS is empty)");
-  if (contentItems.length === 0)
-    throw new Error("[pipeline] No content ingested — aborting");
-  console.log(
-    `[pipeline] Ingested ${contentItems.length} content items (${rssCount} from RSS, ${ytCount} from YouTube)`,
-  );
+  if (contentItems.length === 0) throw new Error("[pipeline] No content ingested — aborting");
+  agentCtx.log(`[pipeline] Ingested ${contentItems.length} items (${rssCount} RSS, ${ytCount} YouTube)`);
 
-  if (STOP_AFTER === "ingest") {
-    console.log(
-      "\n[pipeline] ── STOP_AFTER=ingest — printing ingested articles ──",
-    );
+  if (agentCtx.pipelineStopAfter === "ingest") {
+    agentCtx.log("\n[pipeline] ── STOP_AFTER=ingest — printing ingested articles ──");
     contentItems.forEach((item, i) => {
       console.log(`\n[${i + 1}] ${item.title}`);
-      console.log(
-        `    ${(item.content || "").slice(0, 120).replace(/\n/g, " ")}…`,
-      );
+      console.log(`    ${(item.content || "").slice(0, 120).replace(/\n/g, " ")}…`);
       console.log(`    ${item.url}  pubDate=${item.pubDate ?? "unknown"}`);
     });
-    console.log("\n[pipeline] Done (ingest only).");
+    agentCtx.log("[pipeline] Done (ingest only).");
     return { contentItems };
   }
 
-  // ── Step 2: Generate script (signal extraction → script; fallback to overview) ──────────
   let script;
   let usedSignal = null;
   try {
-    const { best: topSignal, score } = await extractSignals(contentItems);
-    console.log(
-      `[pipeline] Top signal: type=${topSignal.metricType} value="${topSignal.value}" finalScore=${score}`,
-    );
-    script = await generateScriptWithRetry(topSignal);
+    const { best: topSignal, score } = await extractSignals(agentCtx, contentItems);
+    agentCtx.log(`[pipeline] Top signal: type=${topSignal.metricType} value="${topSignal.value}" finalScore=${score}`);
+    script = await generateScriptWithRetry(agentCtx, topSignal);
     usedSignal = topSignal;
   } catch (err) {
     if (err instanceof NoHighSignalError) {
-      console.warn(
-        `[pipeline] No high-signal content today (${err.message}) — generating general overview`,
-      );
-      script = await generateOverviewScript(contentItems);
+      console.warn(`[pipeline] No high-signal content (${err.message}) — generating overview`);
+      script = await generateOverviewScript(agentCtx, contentItems);
     } else {
       throw err;
     }
   }
 
-  // Mark signal as seen only after successful script generation (protects against retry waste)
-  if (usedSignal) {
-    markSeen(usedSignal);
-    console.log("[pipeline] Marked signal as seen for dedup");
+  return { script, usedSignal, contentItems };
+}
+
+// ── Pull one story from Airtable and generate a valid script ──────────────────
+
+async function pullOneStory(agentCtx, excludeIds = []) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const candidate = await getNextPendingStory(agentCtx, excludeIds);
+    if (!candidate) {
+      throw new Error(
+        "[pipeline] No pending stories in Airtable. Run ingest first: RUN_INGEST=true node index.js",
+      );
+    }
+    const title = (candidate.fields || {}).Title || candidate.id;
+    agentCtx.log(`[pipeline] Pulled story: "${title}"`);
+    try {
+      const script = await generateScriptFromStoryWithRetry(agentCtx, candidate);
+      return { script, storyRecord: candidate };
+    } catch (err) {
+      console.warn(`[pipeline] Script failed for "${title}" — skipping: ${err.message}`);
+      await markStoryUsed(agentCtx, candidate.id);
+    }
+  }
+  throw new Error(`[pipeline] Could not generate a valid script after ${MAX_ATTEMPTS} attempts`);
+}
+
+// ── Produce a single video given an approved script ───────────────────────────
+
+async function produceVideo(agentCtx, script, usedSignal, contentItems, videoOutputDir) {
+  const spokenText = `${script.hook} ${script.bridge} ${script.insight} ${script.impact} - Follow us for tomorrow morning update.`;
+
+  if (!fs.existsSync(videoOutputDir)) fs.mkdirSync(videoOutputDir, { recursive: true });
+
+  if (agentCtx.pipelineStopAfter === "script") {
+    agentCtx.log("[pipeline] Done (script only — audio and video skipped).");
+    return { scriptText: spokenText };
   }
 
-  const hookWordCount = script.hook.trim().split(/\s+/).length;
-  console.log(
-    `[pipeline] Script generated: hook="${script.hook}" (${hookWordCount} words)`,
-  );
-
-  // ── Human-in-the-loop: approve script before sending to ElevenLabs ───────────
-  if (HUMAN_IN_THE_LOOP) {
-    script = await humanInTheLoop(script, usedSignal);
-  }
-
-  // default template
-  const spokenText_v1 = `${script.hook}. Good morning Melbourne, here is what happened in the market since yesterday, ${script.insight} ${script.impact} - Follow us for tomorrow morning update.`;
-  // breaking news template
-  const spokenText_v2 = `${script.hook}. Good morning Melbourne, today feels different—and here’s why. ${script.escalation} ${script.insight} ${script.impact} - Follow us for tomorrow morning update.`;
-
-  const spokenText = isBreakingNews ? spokenText_v2 : spokenText_v1;
-
-  if (STOP_AFTER === "script") {
-    printScriptSummary(script, usedSignal);
-    console.log("[pipeline] Done (script only — audio and video skipped).");
-    return { script, scriptText: spokenText };
-  }
-
-  // ── Step 3: Voice (with alignment) + background videos — parallel ────────────
   const [voiceResult, bgVideoPaths] = await Promise.all([
-    generateVoice(spokenText, outputDir),
-    fetchVideos(script, outputDir),
+    generateVoice(agentCtx, spokenText, videoOutputDir),
+    fetchVideos(agentCtx, script, videoOutputDir),
   ]);
-
   const { voicePath, alignment } = voiceResult;
 
-  if (STOP_AFTER === "voice") {
-    console.log(
-      `[pipeline] Done (voice only — video skipped). Voice: ${voicePath}`,
-    );
-    return { script, scriptText: spokenText, voicePath };
+  if (agentCtx.pipelineStopAfter === "voice") {
+    agentCtx.log(`[pipeline] Done (voice only). Voice: ${voicePath}`);
+    return { scriptText: spokenText, voicePath };
   }
 
-  // ── Step 4: Render subtitle PNGs from alignment data ─────────────────────────
-  const subtitles = renderSubtitles(alignment, outputDir);
+  const subtitles = renderSubtitles(alignment, videoOutputDir);
 
-  // ── Step 5: Fallback to images if no video was found ─────────────────────────
   let imagePaths = [];
   if (!bgVideoPaths || bgVideoPaths.length === 0) {
-    console.log("[pipeline] No background video — fetching images as fallback");
-    imagePaths = await fetchImages(script, outputDir);
+    agentCtx.log("[pipeline] No background video — fetching images as fallback");
+    imagePaths = await fetchImages(agentCtx, script, videoOutputDir);
   }
 
-  // ── Step 6: Compose final video ───────────────────────────────────────────────
-  const videoPath = await composeVideo(voicePath, outputDir, {
+  const videoPath = await composeVideo(voicePath, videoOutputDir, {
     bgVideoPaths,
     imagePaths,
     subtitles,
   });
 
-  // ── Step 7: Generate social caption ──────────────────────────────────────────
-  generateCaption(script, usedSignal, contentItems, outputDir);
+  const captionText = generateCaption(agentCtx, script, usedSignal, contentItems, videoOutputDir);
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[pipeline] Done in ${elapsed}s. Output: ${videoPath}`);
+  if (agentCtx.autoPostToTikTok && agentCtx.tikTokAccessToken && videoPath) {
+    try {
+      const tiktokResult = await uploadToTikTok(agentCtx, videoPath, captionText || "");
+      agentCtx.log(`[pipeline] TikTok draft created: publish_id=${tiktokResult.publishId}`);
+    } catch (err) {
+      console.error("[pipeline] TikTok upload failed (non-fatal):", err.message);
+    }
+  }
 
-  return { script, scriptText: spokenText, voicePath, videoPath };
+  return { scriptText: spokenText, voicePath, videoPath };
 }
 
-module.exports = { runPipeline };
+// ── Main pipeline entry point ─────────────────────────────────────────────────
+
+async function runPipeline(agentCtx) {
+  if (!agentCtx) throw new Error("runPipeline requires an agentCtx — use buildCliAgentContext() for CLI runs");
+
+  if (agentCtx.pipelineStopAfter === "ingest" ||
+      (agentCtx.pipelineStopAfter && agentCtx.pipelineStopAfter !== "")) {
+    agentCtx.log(`[pipeline] PIPELINE_STOP_AFTER=${agentCtx.pipelineStopAfter} — will exit early after this stage`);
+  }
+
+  const baseOutputDir = path.resolve(agentCtx.outputDir);
+  if (!fs.existsSync(baseOutputDir)) fs.mkdirSync(baseOutputDir, { recursive: true });
+
+  // ── Breaking news: always single video ────────────────────────────────────
+  if (agentCtx.isBreakingNews) {
+    agentCtx.log("[pipeline] Breaking news mode — fetching fresh data");
+    const result = await runBreakingNewsPipeline(agentCtx);
+    if (result.contentItems && !result.script) return result; // STOP_AFTER=ingest
+
+    let { script, usedSignal, contentItems } = result;
+    agentCtx.log(`[pipeline] Script: hook="${script.hook}"`);
+
+    if (agentCtx.humanInTheLoop) {
+      script = await reviewHook(agentCtx, script, "Breaking News", usedSignal);
+    } else {
+      printScriptSummary(script, "Breaking News", usedSignal);
+    }
+
+    const startTime = Date.now();
+    const output = await produceVideo(agentCtx, script, usedSignal, contentItems, baseOutputDir);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    agentCtx.log(`[pipeline] Done in ${elapsed}s. Output: ${output.videoPath}`);
+    return { script, ...output };
+  }
+
+  // ── Normal mode: pull NUMBER_OF_VIDEOS stories, optionally review hooks, produce videos ──
+  const count = Math.max(1, agentCtx.numberOfVideos);
+  agentCtx.log(`[pipeline] Normal mode — generating ${count} video(s) from Airtable stories`);
+  const startTime = Date.now();
+
+  // Phase 1: pull N stories and generate N scripts
+  agentCtx.log(`\n[pipeline] ── Phase 1: pulling ${count} stor${count === 1 ? "y" : "ies"} and generating scripts ──`);
+  const jobs = [];
+  const pulledIds = [];
+  for (let i = 0; i < count; i++) {
+    agentCtx.log(`[pipeline] Story ${i + 1}/${count}...`);
+    const { script, storyRecord } = await pullOneStory(agentCtx, pulledIds);
+    pulledIds.push(storyRecord.id);
+    jobs.push({ script, storyRecord });
+    agentCtx.log(`[pipeline] Script ${i + 1} ready: hook="${script.hook}"`);
+  }
+
+  // Phase 2: human reviews all hooks (CLI only; web uses two-job HITL pattern)
+  if (agentCtx.humanInTheLoop) {
+    agentCtx.log(`\n[pipeline] ── Phase 2: hook review (${count} script${count === 1 ? "" : "s"}) ──`);
+    for (let i = 0; i < jobs.length; i++) {
+      jobs[i].script = await reviewHook(agentCtx, jobs[i].script, `Video ${i + 1} of ${count}`, null);
+    }
+  } else {
+    for (let i = 0; i < jobs.length; i++) {
+      printScriptSummary(jobs[i].script, `Video ${i + 1} of ${count}`, null);
+    }
+  }
+
+  if (agentCtx.pipelineStopAfter === "script") {
+    agentCtx.log("[pipeline] Done (script only — audio and video skipped).");
+    return { jobs };
+  }
+
+  // Phase 3: produce all videos and mark stories used
+  agentCtx.log(`\n[pipeline] ── Phase 3: producing ${count} video${count === 1 ? "" : "s"} ──`);
+  const results = [];
+  for (let i = 0; i < jobs.length; i++) {
+    const { script, storyRecord } = jobs[i];
+    const videoOutputDir = count === 1 ? baseOutputDir : path.join(baseOutputDir, `video_${i + 1}`);
+    agentCtx.log(`\n[pipeline] Producing video ${i + 1}/${count}...`);
+
+    const output = await produceVideo(agentCtx, script, null, [], videoOutputDir);
+    await markStoryUsed(agentCtx, storyRecord.id);
+    agentCtx.log(
+      `[pipeline] Video ${i + 1} done. Story "${(storyRecord.fields || {}).Title}" marked as Used.`,
+    );
+    results.push({ script, storyRecord, ...output });
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  const videoPaths = results.map((r) => r.videoPath).filter(Boolean);
+  agentCtx.log(`\n[pipeline] All ${count} video(s) done in ${elapsed}s.`);
+  videoPaths.forEach((p, i) => agentCtx.log(`  Video ${i + 1}: ${p}`));
+
+  return results;
+}
+
+module.exports = { runPipeline, produceVideo };

@@ -8,10 +8,8 @@ const ffmpeg = require('../utils/ffmpeg');
 
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1';
 
-// ─── ElevenLabs with character-level timestamps ───────────────────────────────
-
-async function generateVoiceElevenLabs(scriptText, outputDir) {
-  const voiceId   = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+async function generateVoiceElevenLabs(agentCtx, scriptText, outputDir) {
+  const voiceId   = agentCtx.elevenLabsVoiceId;
   const voicePath = path.join(outputDir, 'voice.mp3');
 
   const response = await axios.post(
@@ -23,7 +21,7 @@ async function generateVoiceElevenLabs(scriptText, outputDir) {
     },
     {
       headers: {
-        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'xi-api-key': agentCtx.elevenLabsApiKey,
         'Content-Type': 'application/json',
       },
       timeout: 30000,
@@ -37,8 +35,6 @@ async function generateVoiceElevenLabs(scriptText, outputDir) {
   return { voicePath, alignment };
 }
 
-// ─── macOS built-in TTS fallback (no credits / no alignment data) ─────────────
-
 function generateVoiceMac(scriptText, outputDir) {
   const aiffPath  = path.join(outputDir, 'voice.aiff');
   const voicePath = path.join(outputDir, 'voice.mp3');
@@ -48,11 +44,8 @@ function generateVoiceMac(scriptText, outputDir) {
   fs.unlinkSync(aiffPath);
 
   console.log(`[tts-mac] Voice written to ${voicePath}`);
-  // No alignment available from macOS TTS
   return { voicePath, alignment: null };
 }
-
-// ─── Dev mode: reuse existing voice file, estimate alignment ─────────────────
 
 function getAudioDuration(audioPath) {
   return new Promise((resolve, reject) => {
@@ -85,21 +78,19 @@ async function useDevVoice(scriptText, outputDir) {
   return { voicePath: devPath, alignment };
 }
 
-// ─── Public entry point ───────────────────────────────────────────────────────
-
-async function generateVoice(scriptText, outputDir) {
+async function generateVoice(agentCtx, scriptText, outputDir) {
   if (process.env.DEV_SKIP_TTS === 'true') {
     const devResult = await useDevVoice(scriptText, outputDir);
     if (devResult) return devResult;
   }
 
-  if (!process.env.ELEVENLABS_API_KEY) {
-    console.warn('[voice] No ELEVENLABS_API_KEY — using macOS TTS fallback');
+  if (!agentCtx.elevenLabsApiKey) {
+    console.warn('[voice] No elevenLabsApiKey — using macOS TTS fallback');
     return generateVoiceMac(scriptText, outputDir);
   }
 
   try {
-    return await generateVoiceElevenLabs(scriptText, outputDir);
+    return await generateVoiceElevenLabs(agentCtx, scriptText, outputDir);
   } catch (err) {
     const status = err.response?.status;
     const detail = err.response?.data

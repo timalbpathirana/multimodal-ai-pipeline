@@ -14,12 +14,6 @@ const DOMAIN_TO_PUBLICATION = {
   "petewargent.blogspot.com":       "Pete Wargent Blog",
 };
 
-const DISCLAIMER =
-  "Melbourne Property Pulse provides curated public market data for informational purposes only. Not financial advice. Always do your own research.";
-
-const HASHTAGS =
-  "#MelbourneProperty #PropertyInvesting #AustralianRealEstate #MelbourneRealEstate #PropertyMarket";
-
 function extractDomain(url) {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -48,11 +42,7 @@ function resolvePublications(contentItems) {
   return names;
 }
 
-/**
- * Generate and write the Instagram/TikTok caption to
- * ${outputDir}/caption/caption.txt
- */
-function generateCaption(script, signal, contentItems, outputDir) {
+function generateCaption(agentCtx, script, signal, contentItems, outputDir) {
   let publications = resolvePublications(contentItems);
 
   if (signal && signal.sourceUrl) {
@@ -73,9 +63,9 @@ function generateCaption(script, signal, contentItems, outputDir) {
     "",
     sourceLine,
     "",
-    DISCLAIMER,
+    agentCtx.prompts.disclaimer,
     "",
-    HASHTAGS,
+    agentCtx.prompts.hashtags,
   ].join("\n");
 
   const captionDir  = path.join(outputDir, "caption");
