@@ -8,8 +8,8 @@ const { createCanvas } = require('canvas');
 const W = 1080;
 const H = 220;
 
-// Vertical position: lower third of the 1920px frame
-const SUBTITLE_Y = 1920 - H - 120;
+// Vertical position: slightly below centre of the 1920px frame
+const SUBTITLE_Y = 1000;
 
 // ─── Word timing extraction ───────────────────────────────────────────────────
 

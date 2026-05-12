@@ -10,6 +10,8 @@ const KEYS = [
   { key: "airtable_api_key", label: "Airtable API Key", placeholder: "pat..." },
   { key: "serper_api_key", label: "Serper API Key", placeholder: "" },
   { key: "trigger_secret_key", label: "Trigger Secret Key", placeholder: "" },
+  { key: "tiktok_client_key", label: "TikTok Client Key", placeholder: "Required for token auto-refresh" },
+  { key: "tiktok_client_secret", label: "TikTok Client Secret", placeholder: "Required for token auto-refresh" },
 ];
 
 export default function GlobalConfigPage() {

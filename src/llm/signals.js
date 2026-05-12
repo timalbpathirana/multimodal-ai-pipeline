@@ -374,10 +374,14 @@ async function extractSignals(agentCtx, contentItems) {
   );
 
   if (finalScore < 50) {
-    throw new NoHighSignalError(`Combined score too low: finalScore=${finalScore} (need ≥50)`);
+    throw new NoHighSignalError(
+      `Combined score too low: finalScore=${finalScore} (need ≥50)`,
+    );
   }
 
-  console.log(`[signals] Best signal — type=${best.metricType} value="${best.value}" finalScore=${finalScore}`);
+  console.log(
+    `[signals] Best signal — type=${best.metricType} value="${best.value}" finalScore=${finalScore}`,
+  );
   return {
     best: { ...best, score: finalScore },
     all: candidates,
@@ -398,7 +402,7 @@ Rules:
 - Look for where multiple sources corroborate the same trend — those make the strongest stories
 - Prioritise Melbourne-specific data (clearance rates, median prices, suburb trends, policy changes)
 - Ensure stories are varied: mix metric types, geographies, and angles
-- Every story must be grounded in actual data from the sources provided — no fabrication
+- Every story must be grounded in actual data from the sources provided, no fabrication
 - sourceData must include the verbatim excerpt(s) that inspired the story (max 400 chars each, up to 3 excerpts)
 
 Return ONLY a valid JSON array — no markdown fences, no explanation:
@@ -414,7 +418,9 @@ Return ONLY a valid JSON array — no markdown fences, no explanation:
 
 async function generateStoriesFromContent(agentCtx, contentItems, count = 28) {
   if (contentItems.length === 0) {
-    throw new Error("[signals] Cannot generate stories: no content items provided");
+    throw new Error(
+      "[signals] Cannot generate stories: no content items provided",
+    );
   }
 
   const grouped = {};
@@ -436,20 +442,24 @@ async function generateStoriesFromContent(agentCtx, contentItems, count = 28) {
   });
 
   const contentBlock = sections.join("\n\n");
-  const systemPrompt = agentCtx.prompts.storyFinderSystem.replace("{count}", count);
+  const systemPrompt = agentCtx.prompts.storyFinderSystem.replace(
+    "{count}",
+    count,
+  );
   const client = new Anthropic({ apiKey: agentCtx.anthropicApiKey });
 
-  const response = await client.messages.create({
+  const stream = client.messages.stream({
     model: MODEL_CONFIG.ranking,
-    max_tokens: 8000,
+    max_tokens: 32000,
     system: systemPrompt,
     messages: [
       {
         role: "user",
-        content: `Here is 7 days of Melbourne property content from ${contentItems.length} items across ${Object.keys(grouped).length} source types.\n\nGenerate exactly ${count} story ideas.\n\n${contentBlock}`,
+        content: `Here is the content for agent "${agentCtx.agentName}" from ${contentItems.length} items across ${Object.keys(grouped).length} source types.\n\nGenerate exactly ${count} story ideas.\n\n${contentBlock}`,
       },
     ],
   });
+  const response = await stream.finalMessage();
 
   const usage = response.usage;
   console.log(
@@ -466,7 +476,9 @@ async function generateStoriesFromContent(agentCtx, contentItems, count = 28) {
   try {
     stories = JSON.parse(jsonText);
   } catch {
-    throw new Error(`Story generator returned non-JSON: ${rawText.slice(0, 300)}`);
+    throw new Error(
+      `Story generator returned non-JSON: ${rawText.slice(0, 300)}`,
+    );
   }
 
   if (!Array.isArray(stories)) {
@@ -474,11 +486,19 @@ async function generateStoriesFromContent(agentCtx, contentItems, count = 28) {
   }
 
   if (stories.length < Math.floor(count / 2)) {
-    throw new Error(`Story generator returned too few stories: ${stories.length} (expected at least ${Math.floor(count / 2)})`);
+    throw new Error(
+      `Story generator returned too few stories: ${stories.length} (expected at least ${Math.floor(count / 2)})`,
+    );
   }
 
-  console.log(`[signals] Generated ${stories.length} stories from ${contentItems.length} content items`);
+  console.log(
+    `[signals] Generated ${stories.length} stories from ${contentItems.length} content items`,
+  );
   return stories;
 }
 
-module.exports = { extractSignals, NoHighSignalError, generateStoriesFromContent };
+module.exports = {
+  extractSignals,
+  NoHighSignalError,
+  generateStoriesFromContent,
+};

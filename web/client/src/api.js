@@ -54,6 +54,9 @@ export const api = {
   updateSchedule: (id, sid, data) => apiFetch(`/api/agents/${id}/schedules/${sid}`, { method: "PATCH", body: data }),
   deleteSchedule: (id, sid) => apiFetch(`/api/agents/${id}/schedules/${sid}`, { method: "DELETE" }),
 
+  // Pexels URL verification
+  verifyPexelsUrl: (id, url) => apiFetch(`/api/agents/${id}/settings/verify-pexels`, { method: "POST", body: { url } }),
+
   // Runs
   getRuns: (id) => apiFetch(`/api/agents/${id}/runs`),
   triggerRun: (id, mode) => apiFetch(`/api/agents/${id}/runs`, { method: "POST", body: { mode } }),

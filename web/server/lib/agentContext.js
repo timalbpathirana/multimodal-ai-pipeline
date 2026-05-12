@@ -78,6 +78,7 @@ async function buildAgentContext(agentId, runId, db) {
       process.env.ELEVENLABS_VOICE_ID ||
       "cjVigY5qzO86Huf0OWal",
     pexelsApiKey: resolve("pexels_api_key"),
+    pexelsOverrideUrl: s.pexels_override_url || null,
     airtableApiKey: resolve("airtable_api_key"),
     airtableBaseId: s.airtable_base_id || global.airtable_base_id || process.env.AIRTABLE_BASE_ID || null,
     airtableTable: s.airtable_table || "Stories",
@@ -85,14 +86,22 @@ async function buildAgentContext(agentId, runId, db) {
 
     // TikTok
     tikTokAccessToken: s.tiktok_access_token || null,
+    tikTokRefreshToken: s.tiktok_refresh_token || null,
+    tikTokTokenExpiresAt: s.tiktok_token_expires_at || null,
+    tikTokClientKey: global.tiktok_client_key || process.env.TIKTOK_CLIENT_KEY || null,
+    tikTokClientSecret: global.tiktok_client_secret || process.env.TIKTOK_CLIENT_SECRET || null,
     tikTokOpenId: s.tiktok_open_id || null,
     autoPostToTikTok: s.auto_post_to_tiktok || false,
     tikTokPrivacyLevel: s.tiktok_privacy_level || "DRAFT_FOR_DIRECT_POST",
 
+    // Telegram
+    telegramBotToken: s.telegram_bot_token || null,
+    telegramChatId: s.telegram_chat_id || null,
+    autoSendToTelegram: s.auto_send_to_telegram || false,
+
     // Pipeline flags
     isBreakingNews: s.is_breaking_news || false,
     humanInTheLoop: s.human_in_the_loop || false,
-    numberOfVideos: s.number_of_videos || 1,
     ingestLookbackDays: s.ingest_lookback_days || 7,
     storiesPerWeek: s.stories_per_week || 28,
     pipelineStopAfter: s.pipeline_stop_after || null,
@@ -112,6 +121,8 @@ async function buildAgentContext(agentId, runId, db) {
       storyFinderSystem: promptMap.story_finder_system  || DEFAULT_PROMPTS.story_finder_system,
       hashtags:          promptMap.hashtags             || DEFAULT_PROMPTS.hashtags,
       disclaimer:        promptMap.disclaimer           || DEFAULT_PROMPTS.disclaimer,
+      pexelsQueries:     (promptMap.pexels_queries || DEFAULT_PROMPTS.pexels_queries)
+                           .split("\n").map((q) => q.trim()).filter(Boolean),
     },
 
     outputDir,
@@ -151,7 +162,6 @@ async function buildCliAgentContext() {
 
     isBreakingNews: process.env.IS_BREAKING_NEWS === "true",
     humanInTheLoop: process.env.HUMAN_IN_THE_LOOP === "true",
-    numberOfVideos: parseInt(process.env.NUMBER_OF_VIDEOS || "1", 10),
     ingestLookbackDays: parseInt(process.env.INGEST_LOOKBACK_DAYS || "7", 10),
     storiesPerWeek: parseInt(process.env.STORIES_PER_WEEK || "28", 10),
     pipelineStopAfter: process.env.PIPELINE_STOP_AFTER || null,
@@ -169,6 +179,7 @@ async function buildCliAgentContext() {
       storyFinderSystem: DEFAULT_PROMPTS.story_finder_system,
       hashtags:          DEFAULT_PROMPTS.hashtags,
       disclaimer:        DEFAULT_PROMPTS.disclaimer,
+      pexelsQueries:     DEFAULT_PROMPTS.pexels_queries.split("\n").map((q) => q.trim()).filter(Boolean),
     },
 
     outputDir,

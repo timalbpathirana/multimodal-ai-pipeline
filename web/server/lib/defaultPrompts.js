@@ -4,7 +4,7 @@
 // single-agent CLI pipeline. Each agent in the DB can override any of these.
 // When no DB row exists for an agent's prompt key, the value here is used.
 
-const AUDIENCE_CONTEXT = `YOUR AUDIENCE: People who feel overwhelmed, behind in life, and unsure where to start. They do not understand property jargon. They think owning a home might be impossible. They worry about saving a deposit, paying rent, and feeling behind their peers. Speak like someone who has helped many first home buyers and knows how to explain things simply — not like a market commentator or economist. They want clarity, not complexity, They are not confident decision-makers yet `;
+const AUDIENCE_CONTEXT = `YOUR AUDIENCE: People who feel overwhelmed and unsure where to start. They worry about saving a deposit, paying rent, and feeling behind their peers. Speak like someone who has helped many first home buyers and knows how to explain things simply — not like a market commentator or economist. They want clarity, not complexity `;
 
 const DEFAULT_PROMPTS = {
   audience_context: AUDIENCE_CONTEXT,
@@ -95,7 +95,7 @@ Additional Guidelines:
 
   overview_system: `You are an encouraging Melbourne property guide. Today's news has no single standout data point.
 
-YOUR AUDIENCE: First home buyers who feel overwhelmed, behind in life, and unsure where to start. They worry about saving a deposit and feeling behind their peers. Speak warmly and simply — like someone who genuinely wants to help them take their first step, not like a market analyst.
+YOUR AUDIENCE: First home buyers who feel overwhelmed and unsure where to start. They worry about saving a deposit and feeling behind their peers. Speak warmly and simply like someone who genuinely wants to help them take their first step, not like a market analyst.
 
 Write a warm, grounding 60-second overview of the general Melbourne market mood based on the last few days of news. Move the viewer from uncertainty toward quiet confidence.
 
@@ -161,6 +161,15 @@ Return ONLY a valid JSON array — no markdown fences, no explanation:
     "sourceData": "<verbatim excerpts from source content that support this story>"
   }
 ]`,
+
+  pexels_queries: `Melbourne aerial suburb view
+Australian real estate house exterior
+Melbourne skyline aerial drone
+Australian neighborhood peaceful street
+Melbourne waterfront suburb
+Australian property garden
+Melbourne suburb rooftop view
+Australia coastal suburb aerial`,
 
   hashtags:
     "#MelbourneProperty #PropertyInvesting #AustralianRealEstate #MelbourneRealEstate #PropertyMarket",

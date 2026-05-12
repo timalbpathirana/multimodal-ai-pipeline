@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
     "@trigger.dev/sdk": "^4.4.5",
+    "archiver": "^8.0.0",
     "axios": "^1.15.2",
     "bcryptjs": "^3.0.3",
     "canvas": "^3.2.3",

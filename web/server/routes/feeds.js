@@ -1,8 +1,31 @@
 "use strict";
 
 const express = require("express");
+const Parser = require("rss-parser");
+const { YoutubeTranscript } = require("youtube-transcript");
 const { requireAuth } = require("../middleware/auth");
 const { getPool } = require("../db");
+
+const feedParser = new Parser({
+  customFields: { item: [["yt:videoId", "videoId"]] },
+  timeout: 10000,
+});
+
+async function checkCaptionsForChannel(channelId) {
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+  const feed = await feedParser.parseURL(feedUrl);
+  if (!feed.items || feed.items.length === 0) {
+    throw new Error(`No videos found for channel ${channelId}`);
+  }
+  const videoId = feed.items[0].videoId;
+  if (!videoId) throw new Error(`Could not extract video ID for channel ${channelId}`);
+  try {
+    await YoutubeTranscript.fetchTranscript(videoId);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const router = express.Router({ mergeParams: true });
 router.use(requireAuth);
@@ -60,11 +83,28 @@ router.post("/youtube", async (req, res) => {
   if (!channel_id) return res.status(400).json({ error: "channel_id required" });
   const pool = getPool();
   if (!(await ownsAgent(pool, req.params.id, req.session.userId))) return res.status(404).json({ error: "Agent not found" });
+
+  let captionsAvailable;
+  try {
+    captionsAvailable = await checkCaptionsForChannel(channel_id);
+  } catch (err) {
+    return res.status(400).json({ error: `Could not verify channel: ${err.message}` });
+  }
+
+  if (!captionsAvailable) {
+    return res.status(400).json({
+      error: "This channel has auto-generated captions disabled. Only channels with captions enabled can be used for ingest.",
+    });
+  }
+
   const { rows } = await pool.query(
-    "INSERT INTO agent_youtube_feeds (agent_id, channel_id, label) VALUES ($1, $2, $3) ON CONFLICT (agent_id, channel_id) DO NOTHING RETURNING *",
-    [req.params.id, channel_id, label || null],
+    `INSERT INTO agent_youtube_feeds (agent_id, channel_id, label, captions_available)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (agent_id, channel_id) DO UPDATE SET captions_available = EXCLUDED.captions_available
+     RETURNING *`,
+    [req.params.id, channel_id, label || null, true],
   );
-  res.status(201).json(rows[0] || { error: "Feed already exists" });
+  res.status(201).json(rows[0]);
 });
 
 router.delete("/youtube/:feedId", async (req, res) => {

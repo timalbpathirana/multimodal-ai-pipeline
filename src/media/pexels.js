@@ -6,22 +6,13 @@ const axios = require('axios');
 
 const PEXELS_BASE = 'https://api.pexels.com';
 
-const CALM_REAL_ESTATE_QUERIES = [
-  'Melbourne aerial suburb view',
-  'Australian real estate house exterior',
-  'Melbourne skyline aerial drone',
-  'Australian neighborhood peaceful street',
-  'Melbourne waterfront suburb',
-  'Australian property garden',
-  'Melbourne suburb rooftop view',
-  'Australia coastal suburb aerial',
-];
-
 const MIN_CLIP_DURATION = 5;
 
-function buildSearchQuery(script) {
-  const idx = script.hook.length % CALM_REAL_ESTATE_QUERIES.length;
-  return CALM_REAL_ESTATE_QUERIES[idx];
+function buildSearchQuery(agentCtx, script) {
+  const queries = agentCtx.prompts?.pexelsQueries;
+  if (!queries || queries.length === 0) return 'Melbourne property aerial view';
+  const idx = script.hook.length % queries.length;
+  return queries[idx];
 }
 
 async function download(url, destPath) {
@@ -39,6 +30,52 @@ function pickBestVideoFile(videoFiles) {
   return hd || portrait[0] || videoFiles[0];
 }
 
+function extractPexelsVideoId(url) {
+  const match = url && url.match(/[-\/](\d+)\/?(?:[#?].*)?$/);
+  return match ? match[1] : null;
+}
+
+async function fetchOverrideVideo(agentCtx, outputDir) {
+  const videoId = extractPexelsVideoId(agentCtx.pexelsOverrideUrl);
+  if (!videoId) {
+    console.warn('[pexels] Could not extract video ID from override URL:', agentCtx.pexelsOverrideUrl);
+    return [];
+  }
+
+  console.log(`[pexels] Using override video ID: ${videoId}`);
+  let video;
+  try {
+    const res = await axios.get(`${PEXELS_BASE}/videos/videos/${videoId}`, {
+      headers: { Authorization: agentCtx.pexelsApiKey },
+      timeout: 10000,
+    });
+    video = res.data;
+  } catch (err) {
+    console.warn('[pexels] Override video fetch failed:', err.message);
+    return [];
+  }
+
+  const file = pickBestVideoFile(video.video_files || []);
+  if (!file) {
+    console.warn('[pexels] No suitable video file for override video');
+    return [];
+  }
+
+  const mediaDir = path.join(outputDir, 'media');
+  if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
+
+  const clipPath = path.join(mediaDir, 'clip_0.mp4');
+  try {
+    console.log(`[pexels] Downloading override clip (${file.width}x${file.height}, ${video.duration}s)...`);
+    await download(file.link, clipPath);
+    console.log('[pexels] Override clip downloaded — will be looped for full video duration');
+    return [clipPath];
+  } catch (err) {
+    console.warn('[pexels] Override clip download failed:', err.message);
+    return [];
+  }
+}
+
 async function fetchVideos(agentCtx, script, outputDir, count = 4) {
   const apiKey = agentCtx.pexelsApiKey;
   if (!apiKey) {
@@ -46,7 +83,11 @@ async function fetchVideos(agentCtx, script, outputDir, count = 4) {
     return [];
   }
 
-  const query = buildSearchQuery(script);
+  if (agentCtx.pexelsOverrideUrl) {
+    return fetchOverrideVideo(agentCtx, outputDir);
+  }
+
+  const query = buildSearchQuery(agentCtx, script);
   console.log(`[pexels] Searching videos: "${query}"`);
 
   let videos;
@@ -104,7 +145,7 @@ async function fetchImages(agentCtx, script, outputDir) {
     return [];
   }
 
-  const query = buildSearchQuery(script);
+  const query = buildSearchQuery(agentCtx, script);
   console.log(`[pexels] Searching images: "${query}"`);
 
   let photos;

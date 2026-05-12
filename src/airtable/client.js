@@ -38,11 +38,17 @@ async function createRecords(agentCtx, table, fieldsList) {
 
   for (let i = 0; i < fieldsList.length; i += 10) {
     const chunk = fieldsList.slice(i, i + 10).map((fields) => ({ fields }));
-    const res = await axios.post(
-      `${baseUrl}/${encodeURIComponent(table)}`,
-      { records: chunk },
-      { headers, timeout: 15000 },
-    );
+    let res;
+    try {
+      res = await axios.post(
+        `${baseUrl}/${encodeURIComponent(table)}`,
+        { records: chunk },
+        { headers, timeout: 15000 },
+      );
+    } catch (err) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      throw new Error(`Airtable createRecords failed (${err.response?.status ?? "?"}): ${detail}`);
+    }
     created.push(...(res.data.records || []));
   }
 

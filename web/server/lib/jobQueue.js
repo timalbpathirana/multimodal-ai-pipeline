@@ -6,6 +6,7 @@ const { buildAgentContext } = require("./agentContext");
 const { runIngest } = require("../../../src/ingestion/ingest");
 const { runPipeline, produceVideo } = require("../../../pipeline");
 const { markStoryUsed } = require("../../../src/airtable/stories");
+const { sendVideoToTelegram } = require("../../../src/social/telegram");
 
 let boss = null;
 
@@ -165,6 +166,7 @@ async function handleGenerateScripts([job]) {
   );
   try {
     const agentCtx = await buildAgentContext(agentId, runId, pool);
+    agentCtx.log("[generate-scripts] HITL mode — generating scripts for review. Full video will be produced after approval.");
     // Run pipeline in script-only mode to get scripts for HITL review
     agentCtx.pipelineStopAfter = "script";
     agentCtx.humanInTheLoop = false; // No readline in web mode
@@ -211,6 +213,9 @@ async function handleProduceVideos([job]) {
     const scriptsData = rows[0]?.scripts_data;
     const approvedScripts = scriptsData?.approved || null;
 
+    // outputs: [{ videoPath, captionText }]
+    let outputs = [];
+
     if (approvedScripts) {
       // HITL path: produce videos from pre-approved scripts
       const path = require("path");
@@ -218,7 +223,6 @@ async function handleProduceVideos([job]) {
       const baseOutputDir = path.resolve(agentCtx.outputDir);
       fs.mkdirSync(baseOutputDir, { recursive: true });
 
-      const outputPaths = [];
       for (let i = 0; i < approvedScripts.length; i++) {
         const script = approvedScripts[i];
         const videoOutputDir = approvedScripts.length === 1
@@ -228,19 +232,29 @@ async function handleProduceVideos([job]) {
         const output = await produceVideo(agentCtx, script, null, [], videoOutputDir);
         if (script.storyId) await markStoryUsed(agentCtx, script.storyId);
         agentCtx.log(`[produce-videos] Video ${i + 1} done. Story marked as Used.`);
-        if (output.videoPath) outputPaths.push(output.videoPath);
+        if (output.videoPath) outputs.push({ videoPath: output.videoPath, captionText: output.captionText || null });
       }
-      await setRunStatus(pool, runId, "done", { finishedAt: new Date(), outputPaths });
     } else {
       // Non-HITL path: run full pipeline end-to-end
       const result = await runPipeline(agentCtx);
-      const outputPaths = Array.isArray(result)
-        ? result.map((r) => r.videoPath).filter(Boolean)
-        : result?.videoPath
-        ? [result.videoPath]
-        : [];
-      await setRunStatus(pool, runId, "done", { finishedAt: new Date(), outputPaths });
+      const resultArr = Array.isArray(result) ? result : (result?.videoPath ? [result] : []);
+      outputs = resultArr.filter((r) => r.videoPath).map((r) => ({ videoPath: r.videoPath, captionText: r.captionText || null }));
     }
+
+    // Telegram delivery — non-fatal, runs for both HITL and non-HITL paths
+    if (agentCtx.autoSendToTelegram && agentCtx.telegramBotToken && agentCtx.telegramChatId) {
+      for (const { videoPath, captionText } of outputs) {
+        agentCtx.log(`[telegram] Queuing send — captionText ${captionText ? `${captionText.length} chars` : "null (will use fallback)"}`);
+        try {
+          await sendVideoToTelegram(agentCtx, videoPath, captionText);
+        } catch (err) {
+          agentCtx.log(`[telegram] Send failed (non-fatal): ${err.message}`);
+        }
+      }
+    }
+
+    // Mark run done after all delivery (including Telegram) so UI logs are complete
+    await setRunStatus(pool, runId, "done", { finishedAt: new Date(), outputPaths: outputs.map((o) => o.videoPath) });
   } catch (err) {
     console.error(`[jobQueue] produce-videos failed for run ${runId}:`, err.message);
     await pool.query(
@@ -255,6 +269,16 @@ async function handleProduceVideos([job]) {
 async function handleScheduledRun([job]) {
   const { agentId, mode, scheduleId } = job.data;
   const pool = getPool();
+
+  // Skip if a run is already active for this agent
+  const { rows: active } = await pool.query(
+    "SELECT id FROM pipeline_runs WHERE agent_id = $1 AND status IN ('queued', 'running', 'awaiting_review')",
+    [agentId],
+  );
+  if (active.length > 0) {
+    console.log(`[jobQueue] Scheduled run skipped — agent ${agentId} already has an active run`);
+    return;
+  }
 
   // Create pipeline_runs row
   const { rows } = await pool.query(

@@ -4,7 +4,11 @@ const { fetchRssArticles } = require("./rss");
 const { fetchYoutubeContent } = require("./youtube");
 const { searchWeb } = require("./search");
 const { generateStoriesFromContent } = require("../llm/signals");
-const { archivePendingStories, deleteOldStories, saveStories } = require("../airtable/stories");
+const {
+  archivePendingStories,
+  deleteOldStories,
+  saveStories,
+} = require("../airtable/stories");
 
 async function runIngest(agentCtx) {
   const lookbackDays = agentCtx.ingestLookbackDays;
@@ -12,17 +16,19 @@ async function runIngest(agentCtx) {
 
   const divider = "─".repeat(60);
   agentCtx.log(`\n${divider}`);
-  agentCtx.log("  WEEKLY INGEST MODE");
+  agentCtx.log("  INGEST MODE");
   agentCtx.log(divider);
   agentCtx.log(`  Fetching ${lookbackDays} days of RSS, YouTube, and web data`);
   agentCtx.log(`  Generating ${storiesCount} stories using Claude`);
   agentCtx.log(divider);
 
-  agentCtx.log("[ingest] Starting weekly ingest...");
+  agentCtx.log("[ingest] Starting ingest...");
   const startTime = Date.now();
 
   // Fetch all data sources in parallel
-  const ytTasks = agentCtx.youtubeChannelIds.map((id) => fetchYoutubeContent(id, lookbackDays));
+  const ytTasks = agentCtx.youtubeChannelIds.map((id) =>
+    fetchYoutubeContent(id, lookbackDays),
+  );
   const [rssResult, webResult, ...ytResults] = await Promise.allSettled([
     fetchRssArticles(agentCtx, 3, lookbackDays),
     searchWeb(agentCtx),
@@ -67,8 +73,14 @@ async function runIngest(agentCtx) {
     throw new Error("[ingest] No content collected — aborting");
   }
 
-  agentCtx.log(`[ingest] Sending content to Claude to generate ${storiesCount} stories...`);
-  const stories = await generateStoriesFromContent(agentCtx, contentItems, storiesCount);
+  agentCtx.log(
+    `[ingest] Sending content to Claude to generate ${storiesCount} stories...`,
+  );
+  const stories = await generateStoriesFromContent(
+    agentCtx,
+    contentItems,
+    storiesCount,
+  );
 
   const archived = await archivePendingStories(agentCtx);
   const deleted = await deleteOldStories(agentCtx, 4);

@@ -5,6 +5,47 @@ const axios = require("axios");
 
 const TIKTOK_API_BASE = "https://open.tiktokapis.com/v2";
 const CHUNK_SIZE = 10_000_000; // 10 MB
+const REFRESH_BUFFER_MS = 5 * 60 * 1000; // refresh when within 5 min of expiry
+
+async function refreshTikTokToken(agentCtx) {
+  const { tikTokRefreshToken, tikTokClientKey, tikTokClientSecret, db, agentId } = agentCtx;
+
+  if (!tikTokRefreshToken)
+    throw new Error("[tiktok] No refresh token — paste a Refresh Token in agent Config settings");
+  if (!tikTokClientKey || !tikTokClientSecret)
+    throw new Error("[tiktok] TikTok Client Key / Client Secret missing from Global Config");
+
+  agentCtx.log("[tiktok] Access token expired or expiring soon — refreshing...");
+
+  const params = new URLSearchParams({
+    client_key: tikTokClientKey,
+    client_secret: tikTokClientSecret,
+    grant_type: "refresh_token",
+    refresh_token: tikTokRefreshToken,
+  });
+
+  const res = await axios.post(`${TIKTOK_API_BASE}/oauth/token/`, params.toString(), {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+
+  const { access_token, expires_in, refresh_token } = res.data;
+  if (!access_token) throw new Error(`[tiktok] Token refresh failed: ${JSON.stringify(res.data)}`);
+
+  const expiresAt = new Date(Date.now() + expires_in * 1000);
+
+  await db.query(
+    `UPDATE agent_settings
+     SET tiktok_access_token = $1, tiktok_refresh_token = $2, tiktok_token_expires_at = $3
+     WHERE agent_id = $4`,
+    [access_token, refresh_token, expiresAt, agentId],
+  );
+
+  agentCtx.tikTokAccessToken = access_token;
+  agentCtx.tikTokRefreshToken = refresh_token;
+  agentCtx.tikTokTokenExpiresAt = expiresAt;
+
+  agentCtx.log(`[tiktok] Token refreshed — expires ${expiresAt.toISOString()}`);
+}
 
 async function uploadChunks(videoPath, uploadUrl, fileSize) {
   const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
@@ -54,6 +95,14 @@ async function pollPublishStatus(accessToken, publishId, maxAttempts = 20) {
 }
 
 async function uploadToTikTok(agentCtx, videoPath, captionText) {
+  // Auto-refresh if token is expired or expiring within 5 minutes
+  if (agentCtx.tikTokRefreshToken) {
+    const expiresAt = agentCtx.tikTokTokenExpiresAt ? new Date(agentCtx.tikTokTokenExpiresAt) : null;
+    if (!expiresAt || expiresAt.getTime() < Date.now() + REFRESH_BUFFER_MS) {
+      await refreshTikTokToken(agentCtx);
+    }
+  }
+
   const { tikTokAccessToken, tikTokPrivacyLevel } = agentCtx;
   if (!tikTokAccessToken) throw new Error("[tiktok] tikTokAccessToken is required");
   if (!fs.existsSync(videoPath)) throw new Error(`[tiktok] Video file not found: ${videoPath}`);

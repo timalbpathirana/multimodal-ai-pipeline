@@ -8,7 +8,6 @@ const parser = new Parser({
   timeout: 10000,
 });
 
-const MAX_VIDEOS_PER_CHANNEL = 3;
 const MAX_TRANSCRIPT_CHARS = 3000;
 
 async function fetchYoutubeContent(channelId, maxAgeDays = 3) {
@@ -31,7 +30,7 @@ async function fetchYoutubeContent(channelId, maxAgeDays = 3) {
       if (!pubDate || new Date(pubDate) < cutoff) return false;
       return true;
     })
-    .slice(0, MAX_VIDEOS_PER_CHANNEL);
+;
 
   if (recentVideos.length === 0) {
     console.warn(`[youtube] No videos within last ${maxAgeDays} days for channel ${channelId}`);

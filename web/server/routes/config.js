@@ -14,6 +14,8 @@ const GLOBAL_KEYS = [
   "airtable_api_key",
   "serper_api_key",
   "trigger_secret_key",
+  "tiktok_client_key",
+  "tiktok_client_secret",
 ];
 
 function maskKey(val) {
