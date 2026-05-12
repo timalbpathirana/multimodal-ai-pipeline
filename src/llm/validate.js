@@ -9,16 +9,31 @@ const VAGUE_PHRASES = [
   "things are",
 ];
 
+const FORBIDDEN_CTA_PHRASES = [
+  "buy now",
+  "buy today",
+  "don't miss out",
+  "act fast",
+  "jump in",
+];
+
 function validateScript(script, opts = {}) {
   const reasons = [];
-  const maxHookWords = opts.breakingNews ? 12 : 9;
+  const maxHookWords = 15;
 
   const hookWords = (script.hook || "").trim().split(/\s+/);
   if (hookWords.length > maxHookWords) {
     reasons.push(`hook is ${hookWords.length} words (max ${maxHookWords})`);
   }
-  if (!opts.breakingNews && !/\d/.test(script.hook || "")) {
-    reasons.push("hook contains no number");
+  const isEmotionalHook =
+    /\?$/.test((script.hook || "").trim()) ||
+    /\b(impossible|afford|behind|deposit|rent|priced out|scary|overwhelming|confusing|first home|still possible|locked out)\b/i.test(
+      script.hook || "",
+    );
+  if (!opts.breakingNews && !isEmotionalHook && !/\d/.test(script.hook || "")) {
+    reasons.push(
+      "hook contains no number (use an emotional/question hook, or include a figure)",
+    );
   }
   const hookLower = (script.hook || "").toLowerCase();
   for (const phrase of VAGUE_PHRASES) {
@@ -26,6 +41,29 @@ function validateScript(script, opts = {}) {
       reasons.push(`hook contains vague phrase: "${phrase}"`);
       break;
     }
+  }
+  for (const phrase of FORBIDDEN_CTA_PHRASES) {
+    if (hookLower.includes(phrase)) {
+      reasons.push(
+        `hook contains forbidden CTA phrase: "${phrase}" — rephrase to avoid compliance risk`,
+      );
+      break;
+    }
+  }
+
+  const totalWords = [script.hook, script.bridge, script.insight, script.impact]
+    .filter(Boolean)
+    .join(" ")
+    .trim()
+    .split(/\s+/).length;
+  if (totalWords < 100) {
+    reasons.push(
+      `total script is ${totalWords} words — too short for 60s video (target 130–150)`,
+    );
+  } else if (totalWords > 160) {
+    reasons.push(
+      `total script is ${totalWords} words — too long for 60s video (target 130–150)`,
+    );
   }
 
   return { valid: reasons.length === 0, reasons };

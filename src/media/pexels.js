@@ -6,22 +6,13 @@ const axios = require('axios');
 
 const PEXELS_BASE = 'https://api.pexels.com';
 
-const CALM_REAL_ESTATE_QUERIES = [
-  'Melbourne aerial suburb view',
-  'Australian real estate house exterior',
-  'Melbourne skyline aerial drone',
-  'Australian neighborhood peaceful street',
-  'Melbourne waterfront suburb',
-  'Australian property garden',
-  'Melbourne suburb rooftop view',
-  'Australia coastal suburb aerial',
-];
+const MIN_CLIP_DURATION = 5;
 
-const MIN_CLIP_DURATION = 5; // skip clips too short to be useful
-
-function buildSearchQuery(script) {
-  const idx = script.hook.length % CALM_REAL_ESTATE_QUERIES.length;
-  return CALM_REAL_ESTATE_QUERIES[idx];
+function buildSearchQuery(agentCtx, script) {
+  const queries = agentCtx.prompts?.pexelsQueries;
+  if (!queries || queries.length === 0) return 'Melbourne property aerial view';
+  const idx = script.hook.length % queries.length;
+  return queries[idx];
 }
 
 async function download(url, destPath) {
@@ -33,23 +24,70 @@ async function download(url, destPath) {
   fs.writeFileSync(destPath, Buffer.from(response.data));
 }
 
-// ─── Videos ──────────────────────────────────────────────────────────────────
-
 function pickBestVideoFile(videoFiles) {
-  // Prefer portrait HD (1080x1920 or similar), fall back to any portrait file
   const portrait = videoFiles.filter(f => f.height > f.width);
   const hd = portrait.find(f => f.width >= 720);
   return hd || portrait[0] || videoFiles[0];
 }
 
-async function fetchVideos(script, outputDir, count = 4) {
-  const apiKey = process.env.PEXELS_API_KEY;
-  if (!apiKey) {
-    console.warn('[pexels] No PEXELS_API_KEY — skipping video fetch');
+function extractPexelsVideoId(url) {
+  const match = url && url.match(/[-\/](\d+)\/?(?:[#?].*)?$/);
+  return match ? match[1] : null;
+}
+
+async function fetchOverrideVideo(agentCtx, outputDir) {
+  const videoId = extractPexelsVideoId(agentCtx.pexelsOverrideUrl);
+  if (!videoId) {
+    console.warn('[pexels] Could not extract video ID from override URL:', agentCtx.pexelsOverrideUrl);
     return [];
   }
 
-  const query = buildSearchQuery(script);
+  console.log(`[pexels] Using override video ID: ${videoId}`);
+  let video;
+  try {
+    const res = await axios.get(`${PEXELS_BASE}/videos/videos/${videoId}`, {
+      headers: { Authorization: agentCtx.pexelsApiKey },
+      timeout: 10000,
+    });
+    video = res.data;
+  } catch (err) {
+    console.warn('[pexels] Override video fetch failed:', err.message);
+    return [];
+  }
+
+  const file = pickBestVideoFile(video.video_files || []);
+  if (!file) {
+    console.warn('[pexels] No suitable video file for override video');
+    return [];
+  }
+
+  const mediaDir = path.join(outputDir, 'media');
+  if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
+
+  const clipPath = path.join(mediaDir, 'clip_0.mp4');
+  try {
+    console.log(`[pexels] Downloading override clip (${file.width}x${file.height}, ${video.duration}s)...`);
+    await download(file.link, clipPath);
+    console.log('[pexels] Override clip downloaded — will be looped for full video duration');
+    return [clipPath];
+  } catch (err) {
+    console.warn('[pexels] Override clip download failed:', err.message);
+    return [];
+  }
+}
+
+async function fetchVideos(agentCtx, script, outputDir, count = 4) {
+  const apiKey = agentCtx.pexelsApiKey;
+  if (!apiKey) {
+    console.warn('[pexels] No pexelsApiKey — skipping video fetch');
+    return [];
+  }
+
+  if (agentCtx.pexelsOverrideUrl) {
+    return fetchOverrideVideo(agentCtx, outputDir);
+  }
+
+  const query = buildSearchQuery(agentCtx, script);
   console.log(`[pexels] Searching videos: "${query}"`);
 
   let videos;
@@ -100,16 +138,14 @@ async function fetchVideos(script, outputDir, count = 4) {
   return clipPaths;
 }
 
-// ─── Images (fallback) ────────────────────────────────────────────────────────
-
-async function fetchImages(script, outputDir) {
-  const apiKey = process.env.PEXELS_API_KEY;
+async function fetchImages(agentCtx, script, outputDir) {
+  const apiKey = agentCtx.pexelsApiKey;
   if (!apiKey) {
-    console.warn('[pexels] No PEXELS_API_KEY — skipping image fetch');
+    console.warn('[pexels] No pexelsApiKey — skipping image fetch');
     return [];
   }
 
-  const query = buildSearchQuery(script);
+  const query = buildSearchQuery(agentCtx, script);
   console.log(`[pexels] Searching images: "${query}"`);
 
   let photos;
