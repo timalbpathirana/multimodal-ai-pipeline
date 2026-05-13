@@ -6,6 +6,7 @@ const path = require("path");
 
 const { fetchRssArticles } = require("./src/ingestion/rss");
 const { fetchYoutubeContent } = require("./src/ingestion/youtube");
+const { searchWeb } = require("./src/ingestion/search");
 const { runIngest } = require("./src/ingestion/ingest");
 const {
   generateScriptWithRetry,
@@ -103,19 +104,27 @@ async function runBreakingNewsPipeline(agentCtx) {
   const ytTasks = agentCtx.youtubeChannelIds.map((id) =>
     fetchYoutubeContent(id),
   );
-  const [rssResult, ...ytResults] = await Promise.allSettled([
+  const [rssResult, webResult, ...ytResults] = await Promise.allSettled([
     fetchRssArticles(agentCtx, 2),
+    searchWeb(agentCtx),
     ...ytTasks,
   ]);
 
   const contentItems = [];
   let rssCount = 0;
   let ytCount = 0;
+  let webCount = 0;
   if (rssResult.status === "fulfilled") {
     rssCount = rssResult.value.length;
     contentItems.push(...rssResult.value);
   } else {
     console.error("[pipeline] RSS ingestion failed:", rssResult.reason.message);
+  }
+  if (webResult.status === "fulfilled") {
+    webCount = webResult.value.length;
+    contentItems.push(...webResult.value);
+  } else {
+    console.error("[pipeline] Web search failed:", webResult.reason.message);
   }
   for (const [i, ytResult] of ytResults.entries()) {
     if (ytResult.status === "fulfilled") {
@@ -131,7 +140,7 @@ async function runBreakingNewsPipeline(agentCtx) {
   if (contentItems.length === 0)
     throw new Error("[pipeline] No content ingested — aborting");
   agentCtx.log(
-    `[pipeline] Ingested ${contentItems.length} items (${rssCount} RSS, ${ytCount} YouTube)`,
+    `[pipeline] Ingested ${contentItems.length} items (${rssCount} RSS, ${ytCount} YouTube, ${webCount} Web)`,
   );
 
   if (agentCtx.pipelineStopAfter === "ingest") {

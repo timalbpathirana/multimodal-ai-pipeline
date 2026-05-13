@@ -172,10 +172,13 @@ async function handleGenerateScripts([job]) {
     agentCtx.humanInTheLoop = false; // No readline in web mode
     const result = await runPipeline(agentCtx);
 
-    // result is { jobs: [{script, storyRecord}, ...] } when pipelineStopAfter=script
+    // Normal mode returns { jobs: [{script, storyRecord}, ...] }
+    // Breaking news mode returns { script, scriptText } — no jobs array
     const scripts = result.jobs
       ? result.jobs.map((j) => ({ ...j.script, storyId: j.storyRecord.id }))
-      : [];
+      : result.script
+        ? [result.script]
+        : [];
 
     await setRunStatus(pool, runId, "awaiting_review", { scriptsData: { pending: scripts } });
   } catch (err) {

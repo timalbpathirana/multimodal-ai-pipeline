@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import ScriptReviewer from "../components/ScriptReviewer";
 import ScheduleManager from "../components/ScheduleManager";
+import InstructionsPage from "./InstructionsPage";
 
 const TABS = ["Settings", "Config", "Feeds", "Prompts", "Schedule", "Runs"];
 const STATUS_COLOR = {
@@ -209,9 +210,7 @@ function SettingsTab({ agentId }) {
           type="number"
         />
         <div>
-          <label className="text-gray-400 text-sm block mb-1">
-            Pipeline Stop After
-          </label>
+          <label className="text-gray-400 text-sm block mb-1">Run Mode</label>
           <select
             value={s.pipeline_stop_after || ""}
             onChange={(e) => set("pipeline_stop_after", e.target.value || null)}
@@ -373,6 +372,7 @@ function ConfigTab({ agentId }) {
     mutationFn: () => api.saveSettings(agentId, s),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings", agentId] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
       setForm(null);
       setSaveError(null);
     },
@@ -586,6 +586,7 @@ function FeedsTab({ agentId }) {
   const [ytLabel, setYtLabel] = useState("");
   const [ytError, setYtError] = useState("");
   const [searchQ, setSearchQ] = useState("");
+  const [editingPexels, setEditingPexels] = useState(undefined);
 
   const { data: rss = [] } = useQuery({
     queryKey: ["rss", agentId],
@@ -598,6 +599,28 @@ function FeedsTab({ agentId }) {
   const { data: sq = [] } = useQuery({
     queryKey: ["sq", agentId],
     queryFn: () => api.getSearchQueries(agentId),
+  });
+  const { data: prompts = [] } = useQuery({
+    queryKey: ["prompts", agentId],
+    queryFn: () => api.getPrompts(agentId),
+  });
+  const pexelsPrompt = prompts.find((p) => p.key === "pexels_queries");
+  const pexelsCurrent = editingPexels ?? pexelsPrompt?.content ?? "";
+  const pexelsDirty = editingPexels !== undefined && editingPexels !== pexelsPrompt?.content;
+
+  const savePexels = useMutation({
+    mutationFn: () => api.savePrompt(agentId, "pexels_queries", editingPexels),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["prompts", agentId] });
+      setEditingPexels(undefined);
+    },
+  });
+  const resetPexels = useMutation({
+    mutationFn: () => api.resetPrompt(agentId, "pexels_queries"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["prompts", agentId] });
+      setEditingPexels(undefined);
+    },
   });
 
   const addRss = useMutation({
@@ -690,6 +713,39 @@ function FeedsTab({ agentId }) {
         isPending={addSq.isPending}
         placeholder="Melbourne property news 2026"
       />
+      <div className="border border-gray-800 rounded-xl p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-gray-300 text-sm font-medium">Pexels Video Queries</span>
+            <p className="text-gray-600 text-xs mt-0.5">One query per line. The pipeline cycles through these when searching for background video.</p>
+          </div>
+          <div className="flex gap-3 items-center">
+            {pexelsPrompt && !pexelsPrompt.is_default && (
+              <button
+                onClick={() => resetPexels.mutate()}
+                className="text-gray-500 hover:text-yellow-400 text-xs transition-colors"
+              >
+                Reset to default
+              </button>
+            )}
+            {pexelsDirty && (
+              <button
+                onClick={() => savePexels.mutate()}
+                disabled={savePexels.isPending}
+                className="text-indigo-400 hover:text-indigo-300 text-xs transition-colors disabled:opacity-50"
+              >
+                {savePexels.isPending ? "Saving..." : "Save"}
+              </button>
+            )}
+          </div>
+        </div>
+        <textarea
+          value={pexelsCurrent}
+          onChange={(e) => setEditingPexels(e.target.value)}
+          rows={8}
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 font-mono resize-y focus:outline-none focus:border-indigo-500"
+        />
+      </div>
     </div>
   );
 }
@@ -1276,6 +1332,7 @@ function RunsTab({ agentId }) {
 export default function AgentDetailPage() {
   const { id } = useParams();
   const [tab, setTab] = useState("Runs");
+  const [showInstructions, setShowInstructions] = useState(false);
 
   const {
     data: agent,
@@ -1297,41 +1354,76 @@ export default function AgentDetailPage() {
     );
 
   return (
-    <div className="min-h-screen bg-gray-950 p-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <Link
-            to="/"
-            className="text-gray-500 hover:text-white text-sm transition-colors"
-          >
-            ← Agents
-          </Link>
-          <span className="text-gray-700">/</span>
-          <h1 className="text-xl font-bold text-white">{agent?.name}</h1>
-          <span className="text-gray-600 text-sm">{agent?.niche}</span>
-        </div>
-
-        <div className="flex gap-1 mb-6 border-b border-gray-800 pb-1">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-4 py-2 text-sm rounded-t-lg transition-colors ${tab === t ? "text-white bg-gray-800" : "text-gray-500 hover:text-gray-300"}`}
+    <div className="flex bg-gray-950">
+      {/* Main agent content */}
+      <div className="flex-1 p-6 min-w-0">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-3 mb-6">
+            <Link
+              to="/"
+              className="text-gray-500 hover:text-white text-sm transition-colors"
             >
-              {t}
+              ← Agents
+            </Link>
+            <span className="text-gray-700">/</span>
+            <h1 className="text-xl font-bold text-white">{agent?.name}</h1>
+            <span className="text-gray-600 text-sm">{agent?.niche}</span>
+            <button
+              onClick={() => setShowInstructions((v) => !v)}
+              title={showInstructions ? "Hide instructions" : "Show instructions"}
+              className={`ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                showInstructions
+                  ? "bg-indigo-600/20 border-indigo-700/40 text-indigo-400"
+                  : "border-gray-700 text-gray-500 hover:text-white hover:border-gray-600"
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+              {showInstructions ? "Hide Docs" : "Show Docs"}
             </button>
-          ))}
-        </div>
+          </div>
 
-        <div>
-          {tab === "Settings" && <SettingsTab agentId={id} />}
-          {tab === "Config" && <ConfigTab agentId={id} />}
-          {tab === "Feeds" && <FeedsTab agentId={id} />}
-          {tab === "Prompts" && <PromptsTab agentId={id} />}
-          {tab === "Schedule" && <ScheduleManager agentId={id} />}
-          {tab === "Runs" && <RunsTab agentId={id} />}
+          <div className="flex gap-1 mb-6 border-b border-gray-800 pb-1">
+            {TABS.map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-4 py-2 text-sm rounded-t-lg transition-colors ${tab === t ? "text-white bg-gray-800" : "text-gray-500 hover:text-gray-300"}`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+
+          <div>
+            {tab === "Settings" && <SettingsTab agentId={id} />}
+            {tab === "Config" && <ConfigTab agentId={id} />}
+            {tab === "Feeds" && <FeedsTab agentId={id} />}
+            {tab === "Prompts" && <PromptsTab agentId={id} />}
+            {tab === "Schedule" && <ScheduleManager agentId={id} />}
+            {tab === "Runs" && <RunsTab agentId={id} />}
+          </div>
         </div>
       </div>
+
+      {/* Instructions side panel — sticky so it stays in view while the main content scrolls */}
+      {showInstructions && (
+        <div className="w-[420px] shrink-0 border-l border-gray-800 overflow-y-auto bg-gray-950 sticky top-0 h-screen">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800 sticky top-0 bg-gray-950 z-10">
+            <span className="text-gray-400 text-xs font-medium uppercase tracking-widest">
+              Docs
+            </span>
+            <button
+              onClick={() => setShowInstructions(false)}
+              className="text-gray-600 hover:text-white text-xs transition-colors"
+            >
+              ✕ Close
+            </button>
+          </div>
+          <InstructionsPage />
+        </div>
+      )}
     </div>
   );
 }
