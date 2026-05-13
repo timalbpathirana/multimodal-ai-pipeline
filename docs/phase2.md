@@ -6,7 +6,7 @@ Phase 2 replaces the Phase 1 single-pass LLM summarisation with a **multi-step s
 
 ### Core problem solved
 
-Phase 1 sent raw article text directly to Claude Haiku and asked it to summarise. The result was generic summaries like *"Market sentiment is shifting as buyer fatigue sets in"* — vague, numberless, low engagement.
+Phase 1 sent raw article text directly to Claude Haiku and asked it to summarise. The result was generic summaries like _"Market sentiment is shifting as buyer fatigue sets in"_ — vague, numberless, low engagement.
 
 Phase 2 changes the approach:
 
@@ -14,7 +14,7 @@ Phase 2 changes the approach:
 2. **Filter** — drop non-signal sentences with a keyword guard
 3. **Pre-score** — assign heuristic quality scores before the LLM sees anything
 4. **Rank** — a lightweight LLM call selects the single best signal
-5. **Generate** — a second LLM call writes the script *from* the structured signal
+5. **Generate** — a second LLM call writes the script _from_ the structured signal
 6. **Validate** — post-generation hook constraints enforced with retry and deterministic fallback
 7. **Deduplicate** — 3-day TTL prevents the same metric being reused on consecutive days
 
@@ -24,20 +24,20 @@ Phase 2 changes the approach:
 
 ## New Files
 
-| File | Purpose |
-|------|---------|
-| `config/feeds.js` | Configurable RSS feed list — add feeds here without touching any other file |
-| `src/llm/signals.js` | Signal extraction, pre-scoring, LLM ranking, dedup integration |
+| File                  | Purpose                                                                           |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `config/feeds.js`     | Configurable RSS feed list — add feeds here without touching any other file       |
+| `src/llm/signals.js`  | Signal extraction, pre-scoring, LLM ranking, dedup integration                    |
 | `src/llm/validate.js` | Post-generation hook constraint validator and deterministic fallback hook builder |
-| `src/llm/dedup.js` | File-based signal deduplication with TTL and automatic pruning |
+| `src/llm/dedup.js`    | File-based signal deduplication with TTL and automatic pruning                    |
 
 ## Modified Files
 
-| File | Change summary |
-|------|---------------|
-| `src/ingestion/rss.js` | Imports feeds from `config/feeds.js`; adds `pubDate` to each article |
-| `src/llm/claude.js` | Added `generateScriptFromSignal`, `generateScriptWithRetry`, `generateOverviewScript`; updated prompts to V2 |
-| `pipeline.js` | Step 2 replaced with 3-path orchestration; `PIPELINE_STOP_AFTER` early-exit support; `markSeen` wired after script success |
+| File                   | Change summary                                                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `src/ingestion/rss.js` | Imports feeds from `config/feeds.js`; adds `pubDate` to each article                                                       |
+| `src/llm/claude.js`    | Added `generateScriptFromSignal`, `generateScriptWithRetry`, `generateOverviewScript`; updated prompts to V2               |
+| `pipeline.js`          | Step 2 replaced with 3-path orchestration; `PIPELINE_STOP_AFTER` early-exit support; `markSeen` wired after script success |
 
 ---
 
@@ -47,14 +47,8 @@ Single source of truth for RSS feed URLs. Adding a new feed requires one line he
 
 ```js
 const RSS_FEEDS = [
-  'https://www.realestate.com.au/news/feed/',
-  'https://propertyupdate.com.au/feed/',
-  'https://www.smartpropertyinvestment.com.au/news?format=feed&type=rss',
-  'https://www.yourinvestmentpropertymag.com.au/feed',
-  'https://positiverealestate.com.au/feed/',
-  'https://ironfish.com.au/feed/',
-  'https://opencorp.com.au/feed/',
-  'https://petewargent.blogspot.com/feeds/posts/default?alt=rss',
+  "https://www.realestate.com.au/news/feed/",
+  "https://propertyupdate.com.au/feed/",
 ];
 ```
 
@@ -77,10 +71,11 @@ The core of Phase 2. Two-stage pipeline: regex pre-pass → LLM ranking.
 **Numeric pattern** — catches percentages, basis points, and dollar shorthands:
 
 ```js
-const NUMERIC_PATTERN = /(\$\d[\d,.]*[km]?\b|\d+\.?\d*\s*(%|per cent|basis points))/i;
+const NUMERIC_PATTERN =
+  /(\$\d[\d,.]*[km]?\b|\d+\.?\d*\s*(%|per cent|basis points))/i;
 ```
 
-The original Phase 1 pattern did not catch standalone dollar amounts like `$850k` (the `$` appeared in the alternation *after* the digits, which is the reverse of natural English). The new pattern handles both `$850k` and `68%`.
+The original Phase 1 pattern did not catch standalone dollar amounts like `$850k` (the `$` appeared in the alternation _after_ the digits, which is the reverse of natural English). The new pattern handles both `$850k` and `68%`.
 
 **Signal keyword filter** — eliminates junk sentences:
 
@@ -106,6 +101,7 @@ const SIGNAL_KEYWORD_RE = /\b(clearance
 ```
 
 A sentence must match **both** patterns to become a candidate. This removes noise like:
+
 - `"3-bedroom house in Brighton"` — no numeric pattern
 - `"$1.2m luxury penthouse sold"` — no signal keyword
 - `"The 5-year fixed rate offer"` — no signal keyword around the number
@@ -135,19 +131,19 @@ Title fallback: if no sentence in an article qualifies, the article title is che
 
 Runs on every candidate before any LLM call. Produces a deterministic quality score based on signal type, freshness, and sentence characteristics.
 
-| Condition | Score boost |
-|-----------|------------|
-| `metricType === 'clearance_rate'` | +30 |
-| `metricType === 'price_change'` | +25 |
-| `metricType === 'interest_rate'` | +20 |
-| `metricType === 'volume'` | +15 |
-| `metricType === 'days_on_market'` | +10 |
-| Sentence contains `%` | +10 |
-| Sentence length < 120 chars | +5 |
-| Direction detected (`up` or `down`) | +5 |
-| `pubDate` age < 24 hours | +15 |
-| `pubDate` age < 48 hours | +10 |
-| `pubDate` age < 72 hours | +5 |
+| Condition                                 | Score boost                                 |
+| ----------------------------------------- | ------------------------------------------- |
+| `metricType === 'clearance_rate'`         | +30                                         |
+| `metricType === 'price_change'`           | +25                                         |
+| `metricType === 'interest_rate'`          | +20                                         |
+| `metricType === 'volume'`                 | +15                                         |
+| `metricType === 'days_on_market'`         | +10                                         |
+| Sentence contains `%`                     | +10                                         |
+| Sentence length < 120 chars               | +5                                          |
+| Direction detected (`up` or `down`)       | +5                                          |
+| `pubDate` age < 24 hours                  | +15                                         |
+| `pubDate` age < 48 hours                  | +10                                         |
+| `pubDate` age < 72 hours                  | +5                                          |
 | Timeframe contains "today" or "this week" | +5 (secondary — for YouTube / null pubDate) |
 
 ### Stage B — LLM ranking call
@@ -170,6 +166,7 @@ After the LLM selects the best candidate:
 4. If **all strong candidates are duplicates** → throw `NoHighSignalError('All strong signals already used recently')` → caught in `pipeline.js` → `generateOverviewScript()`
 
 **Logs:**
+
 ```
 [signals] Candidates found: 6 (raw numeric + keyword matches)
 [signals] Pre-scores — top candidates: clearance_rate(60), price_change(45), volume(30)
@@ -212,6 +209,7 @@ Trigger.dev cloud runs in an **ephemeral container** — the filesystem is reset
 `markSeen(signal)` is called in `pipeline.js` **after** `generateScriptWithRetry` succeeds — not inside `extractSignals`. This prevents a signal from being marked as used if script generation later throws, which would waste the signal on the next Trigger.dev retry attempt.
 
 **Logs:**
+
 ```
 [dedup] Checked "clearance_rate:68%" — fresh (not seen before)
 [dedup] Checked "price_change:3.2%" — duplicate (seen 14h ago)
@@ -230,11 +228,11 @@ Pure utility — no API calls, no side effects.
 
 Enforces the Phase 2 output contract on any generated script:
 
-| Check | Rule |
-|-------|------|
-| Hook length | ≤ 8 words |
-| Hook number | Must contain at least one digit |
-| Hook tone | Must not contain vague phrases: `'market is'`, `'sentiment is'`, `'experts say'`, `"it's worth noting"`, `'according to'`, `'things are'` |
+| Check       | Rule                                                                                                                                      |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Hook length | ≤ 8 words                                                                                                                                 |
+| Hook number | Must contain at least one digit                                                                                                           |
+| Hook tone   | Must not contain vague phrases: `'market is'`, `'sentiment is'`, `'experts say'`, `"it's worth noting"`, `'according to'`, `'things are'` |
 
 Returns `{ valid: boolean, reasons: string[] }`.
 
@@ -243,6 +241,7 @@ Returns `{ valid: boolean, reasons: string[] }`.
 Deterministic hook builder — used as final fallback when both LLM attempts produce an invalid hook. No LLM call, zero cost.
 
 Algorithm:
+
 1. Find the numeric pattern in `rawSentence`
 2. Locate the word containing the number
 3. Build a 7-word window centred around that word
@@ -256,11 +255,11 @@ Guarantees: the number is always in the output; output is always ≤ 7 words.
 
 ### New exports
 
-| Function | Purpose |
-|----------|---------|
+| Function                                  | Purpose                                                                            |
+| ----------------------------------------- | ---------------------------------------------------------------------------------- |
 | `generateScriptFromSignal(signal, opts?)` | Generates script from a `SignalObject` — takes structured signal, not raw articles |
-| `generateScriptWithRetry(signal)` | Wraps the above with 2-attempt validation + deterministic fallback |
-| `generateOverviewScript(contentItems)` | Warm positive overview for low-signal or all-deduped days |
+| `generateScriptWithRetry(signal)`         | Wraps the above with 2-attempt validation + deterministic fallback                 |
+| `generateOverviewScript(contentItems)`    | Warm positive overview for low-signal or all-deduped days                          |
 
 `generateScript(contentItems)` (original Phase 1 function) is kept as a retained legacy export. It is no longer called by the main pipeline path.
 
@@ -313,6 +312,7 @@ Fallback (no LLM call)
 For dollar-value signals, the retry reminder allows abbreviation: `"MUST contain a reference to the value $850k (you may round/abbreviate)"`. For percentage signals it requires the exact figure.
 
 **Logs:**
+
 ```
 [claude] Hook validation passed (attempt 1): "Auction rates just dropped to 68%" (6 words)
 [claude] Hook validation failed (attempt 1): hook is 11 words (max 8)
@@ -350,12 +350,12 @@ Path C — No numeric signals at all:
 
 Set in `.env` to stop the pipeline after a given stage and skip the rest. Useful for checking script quality without spending ElevenLabs or Pexels credits.
 
-| Value | Stops after | Use case |
-|-------|------------|---------|
-| `ingest` | Step 1 — prints all ingested articles | Verify feeds are working, check article quality |
-| `script` | Step 2 — prints full script preview | **Primary quality check** — evaluate hook, insight, impact before audio |
-| `voice` | Step 3 — generates voice file only | Test TTS without video composition |
-| *(empty)* | Runs all 6 steps | Normal daily run |
+| Value     | Stops after                           | Use case                                                                |
+| --------- | ------------------------------------- | ----------------------------------------------------------------------- |
+| `ingest`  | Step 1 — prints all ingested articles | Verify feeds are working, check article quality                         |
+| `script`  | Step 2 — prints full script preview   | **Primary quality check** — evaluate hook, insight, impact before audio |
+| `voice`   | Step 3 — generates voice file only    | Test TTS without video composition                                      |
+| _(empty)_ | Runs all 6 steps                      | Normal daily run                                                        |
 
 **Script preview output** (`PIPELINE_STOP_AFTER=script`):
 
@@ -386,21 +386,21 @@ Step 1 log now includes source breakdown:
 
 ## New Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PIPELINE_STOP_AFTER` | *(empty)* | `ingest` / `script` / `voice` — stop early at this stage |
-| `SIGNAL_STORE_PATH` | `OUTPUT_DIR/processed_signals.json` | Custom path for the dedup store |
+| Variable              | Default                             | Description                                              |
+| --------------------- | ----------------------------------- | -------------------------------------------------------- |
+| `PIPELINE_STOP_AFTER` | _(empty)_                           | `ingest` / `script` / `voice` — stop early at this stage |
+| `SIGNAL_STORE_PATH`   | `OUTPUT_DIR/processed_signals.json` | Custom path for the dedup store                          |
 
 ---
 
 ## LLM Cost Analysis
 
-| Call | Model | ~Input tokens | ~Output tokens | ~Cost (Haiku) |
-|------|-------|--------------|----------------|--------------|
-| Signal ranking | Haiku | ~300 | ~50 | $0.0001 |
-| Script generation | Haiku | ~400 | ~120 | $0.0002 |
-| **Total (signal day)** | | **~700** | **~170** | **~$0.0003** |
-| Overview (fallback day) | Haiku | ~900 | ~100 | $0.0003 |
+| Call                    | Model | ~Input tokens | ~Output tokens | ~Cost (Haiku) |
+| ----------------------- | ----- | ------------- | -------------- | ------------- |
+| Signal ranking          | Haiku | ~300          | ~50            | $0.0001       |
+| Script generation       | Haiku | ~400          | ~120           | $0.0002       |
+| **Total (signal day)**  |       | **~700**      | **~170**       | **~$0.0003**  |
+| Overview (fallback day) | Haiku | ~900          | ~100           | $0.0003       |
 
 Phase 1 cost was ~$0.0004/run (1,200 input tokens from full article text). Phase 2 is cheaper because the ranking call uses compressed signal objects (~15 tokens each) rather than full article bodies.
 
