@@ -5,6 +5,8 @@ Built by Timal Pathirana.
 An AI-powered end to end content generation pipeline that ingests market signals, ranks insights, generates scripts using LLMs, and produces short-form content automatically.
 
 ---
+<img width="1440" height="754" alt="Screenshot 2026-05-13 at 12 08 01 PM" src="https://github.com/user-attachments/assets/0bf95ee9-d23a-4bd1-91e5-d603c2fb5571" />
+
 
 ## What is this platform?
 
