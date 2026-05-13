@@ -11,12 +11,15 @@ router.get("/", async (req, res) => {
   const pool = getPool();
   const { rows } = await pool.query(
     `SELECT a.id, a.name, a.niche, a.is_active, a.created_at,
-            pr.status AS last_run_status, pr.created_at AS last_run_at
+            pr.status AS last_run_status, pr.created_at AS last_run_at,
+            COALESCE(s.auto_post_to_tiktok,    false) AS has_tiktok,
+            COALESCE(s.auto_send_to_telegram, false) AS has_telegram
      FROM agents a
      LEFT JOIN LATERAL (
        SELECT status, created_at FROM pipeline_runs
        WHERE agent_id = a.id ORDER BY created_at DESC LIMIT 1
      ) pr ON true
+     LEFT JOIN agent_settings s ON s.agent_id = a.id
      WHERE a.user_id = $1 ORDER BY a.created_at DESC`,
     [req.session.userId],
   );

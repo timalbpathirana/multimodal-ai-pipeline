@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -21,23 +20,24 @@ export default function GlobalConfigPage() {
 
   const { mutate: save, isPending } = useMutation({
     mutationFn: () => api.saveConfig(form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["config"] }); setForm({}); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["config"] });
+      setForm({});
+    },
   });
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   return (
-    <div className="min-h-screen bg-gray-950 p-6">
-      <div className="max-w-2xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <Link to="/" className="text-gray-500 hover:text-white text-sm transition-colors">← Agents</Link>
-          <span className="text-gray-700">/</span>
-          <h1 className="text-xl font-bold text-white">Global Config</h1>
+    <div className="p-6">
+      <div className="max-w-2xl">
+        <div className="mb-6">
+          <h1 className="text-xl font-bold text-white">Global Settings</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            Default API keys applied to all agents. Per-agent overrides take priority.
+            Current values are shown masked — enter a new value to update.
+          </p>
         </div>
-        <p className="text-gray-500 text-sm mb-5">
-          Default API keys applied to all agents. Per-agent overrides take priority.
-          Current values shown masked — enter a new value to update.
-        </p>
         <div className="space-y-4">
           {KEYS.map(({ key, label, placeholder }) => (
             <div key={key}>
@@ -56,6 +56,7 @@ export default function GlobalConfigPage() {
           ))}
         </div>
         <button
+          type="button"
           onClick={() => save()}
           disabled={isPending || Object.keys(form).length === 0}
           className="mt-5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors"
