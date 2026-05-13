@@ -7,6 +7,10 @@ An AI-powered end to end content generation pipeline that ingests market signals
 ---
 <img width="1440" height="754" alt="Screenshot 2026-05-13 at 12 08 01 PM" src="https://github.com/user-attachments/assets/0bf95ee9-d23a-4bd1-91e5-d603c2fb5571" />
 
+---
+<img width="846" height="532" alt="Screenshot 2026-05-13 at 7 06 52 PM" src="https://github.com/user-attachments/assets/74d6148d-30db-4ca4-a8e1-02cd061fb630" />
+
+
 
 ## What is this platform?
 
