@@ -37,7 +37,7 @@ The goal is to:
 Single admin account. No registration page. The admin email and password are set via environment variables at deploy time:
 
 ```
-ADMIN_EMAIL=timalbathiya1995@gmail.com
+ADMIN_EMAIL=youremail@gmail.com
 ADMIN_PASSWORD=<set at deploy>
 ```
 
@@ -644,7 +644,7 @@ SESSION_SECRET=<32-char random>
 OUTPUT_BASE_DIR=/data/output
 PORT=3000
 NODE_ENV=production
-ADMIN_EMAIL=timalbathiya1995@gmail.com
+ADMIN_EMAIL=youremail@gmail.com
 ADMIN_PASSWORD=<set at deploy>
 ```
 
